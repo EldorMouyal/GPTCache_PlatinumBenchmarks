@@ -1,10 +1,17 @@
-GPTCache_PlatinumBenchmarks/
-│
-├── .gitignore
-├── README.md
-├── requirements.txt
-├── run_with_gptcache.py
-├── platinum-benchmarks/         ← clone the benchmark here
-│   └── (original codebase)
-└── scripts/
-    └── init_env_windows.bat     ← optional helper script
+venv/
+__pycache__/
+*.pyc
+*.log
+.cache/
+.cache/*/
+.cache/*/*
+.cache/*/*/*
+cache/
+cache/*
+
+# VSCode or PyCharm
+.idea/
+.vscode/
+
+# Jupyter stuff (if used later)
+.ipynb_checkpoints/
