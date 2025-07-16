@@ -1,0 +1,4 @@
+gptcache==0.1.44
+numpy==1.24.4
+datasets
+requests
