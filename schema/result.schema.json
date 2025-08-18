@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://llmcache-bench.local/schema/result.schema.json",
+  "title": "LLMCache-Bench Run Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run", "model", "dataset", "cache", "metrics", "items", "output"],
+  "properties": {
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "seed", "started_at", "completed_at"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "seed": { "type": "integer" },
+        "notes": { "type": "string" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["success", "partial", "failed"] }
+      }
+    },
+
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "name", "params"],
+      "properties": {
+        "provider": { "type": "string" },
+        "name": { "type": "string" },
+        "params": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "temperature": { "type": "number" },
+            "top_p": { "type": "number" },
+            "max_tokens": { "type": "integer" }
+          }
+        }
+      }
+    },
+
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "split", "slice", "count_processed"],
+      "properties": {
+        "name": { "type": "string" },
+        "split": { "type": "string" },
+        "slice": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["start", "limit"],
+          "properties": {
+            "start": { "type": "integer", "minimum": 0 },
+            "limit": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "count_processed": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["none", "vanilla", "extended"] },
+        "stats": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hits", "misses"],
+          "properties": {
+            "hits": { "type": "integer", "minimum": 0 },
+            "misses": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["latency_mean_ms", "latency_p95_ms", "latency_p99_ms", "accuracy_exact"],
+      "properties": {
+        "latency_mean_ms": { "type": "number", "minimum": 0 },
+        "latency_p95_ms":  { "type": "number", "minimum": 0 },
+        "latency_p99_ms":  { "type": "number", "minimum": 0 },
+        "accuracy_exact":  { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+
+    "items": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "prompt", "response", "latency_ms", "cached"],
+        "properties": {
+          "id": { "type": "string" },
+          "prompt": { "type": "string" },
+          "response": { "type": "string" },
+          "gold": { "type": "string" },
+          "latency_ms": { "type": "number", "minimum": 0 },
+          "cached": { "type": "boolean" },
+          "cache_hit_score": { "type": "number" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dir", "file"],
+      "properties": {
+        "dir": { "type": "string" },
+        "file": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,32 @@
+
+# Single source of truth for a run. Keep it small and explicit.
+
+run:
+  id: "local-dev-001"        # free-form but unique per run
+  seed: 42                   # for any randomized pieces down the line
+  notes: "smoke test"        # short human note; optional
+
+model:
+  provider: "ollama"         # e.g., ollama | openai | lmstudio
+  name: "gemma2:9b"        # concrete model id for the provider
+  params:
+    temperature: 0.2
+    top_p: 0.9
+    max_tokens: 256
+
+dataset:
+  name: "platinumbench"      # loader key you’ll implement later
+  split: "test"               # dev | test | custom
+  subsets: ["gsm8k", "singleq"]
+  slice:
+    start: 0                 # 0-based start index
+    limit: 10                # number of samples to take
+  use_hf: true
+
+cache:
+  mode: "none"               # none | vanilla | extended
+  # threshold, index paths, etc. intentionally omitted for Step 1
+
+output:
+  dir: "results/raw"         # where JSON results will be written
+  filename_pattern: "{run_id}.json"  # runner will format this later
