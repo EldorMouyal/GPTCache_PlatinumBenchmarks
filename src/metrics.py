@@ -1,132 +1,110 @@
-#!/usr/bin/env python3
-"""
-metrics.py — Step 6 (Metrics Module) for LLMCache-Bench
+# src/metrics.py
+"""Lightweight metrics helpers for LLMCache‑Bench.
 
-Pure-Python, deterministic, import-safe helpers for aggregating:
-- Latency statistics: mean, p95, p99 (ms)
-- Cache hit/miss counts (+ hit_rate for convenience)
-- Exact-match accuracy against `gold` (string) per item
+Exposed pure functions:
+- latency_stats(samples) -> {"mean": float, "p95": float, "p99": float}
+- hit_rate(hits, total) -> float
+- throughput(num_requests, elapsed) -> float
+- correctness(expected: list[str], out: str) -> bool
 
-Each `item` is expected to have at least:
-  {"latency_ms": float, "cached": bool, "response": str, "gold": str?}
-
-Intended usage in runner.py (later step; do NOT modify runner now):
--------------------------------------------------------------------
-    from metrics import aggregate_from_items
-
-    metrics, cache_stats = aggregate_from_items(result["items"])
-    result["metrics"] = {
-        "latency_mean_ms": metrics["latency_mean_ms"],
-        "latency_p95_ms":  metrics["latency_p95_ms"],
-        "latency_p99_ms":  metrics["latency_p99_ms"],
-        "accuracy_exact":  metrics["accuracy_exact"],
-    }
-    # If your pipeline also tracks cache stats at item-level:
-    result["cache"]["stats"]["hits"]   = cache_stats["hits"]
-    result["cache"]["stats"]["misses"] = cache_stats["misses"]
--------------------------------------------------------------------
+Correctness:
+1) Numeric-first: parse model output ("Answer: <num>" or last number in text)
+   and expected candidates; compare with a small tolerance.
+2) Otherwise, normalized text equality or containment (demo style).
 """
 
 from __future__ import annotations
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Iterable, List, Dict, Optional
 import math
-import statistics
+import re
 
 
-__all__ = [
-    "percentile",
-    "latency_stats",
-    "hit_miss_counts",
-    "accuracy_exact",
-    "aggregate_from_items",
-]
+# ----------- tiny internal helpers (pure) ------------
 
+_NUM_TOL = 1e-6
 
-def percentile(values: Iterable[float], p: float) -> float:
-    """Nearest-rank percentile (inclusive) for a finite iterable.
-    Returns 0.0 if empty. Deterministic for ties.
-    """
-    vals = list(values)
-    if not vals:
+def _percentile(sorted_vals: List[float], p: float) -> float:
+    """Nearest-rank percentile for 0 < p <= 100. Returns 0.0 on empty input."""
+    if not sorted_vals:
         return 0.0
-    s = sorted(float(v) for v in vals)
-    rank = max(1, math.ceil((p / 100.0) * len(s)))
-    return float(s[rank - 1])
+    if p <= 0:
+        return float(sorted_vals[0])
+    if p >= 100:
+        return float(sorted_vals[-1])
+    k = math.ceil((p / 100.0) * len(sorted_vals)) - 1  # nearest-rank index
+    return float(sorted_vals[max(0, min(k, len(sorted_vals) - 1))])
+
+def _mean(xs: Iterable[float]) -> float:
+    s = 0.0
+    n = 0
+    for v in xs:
+        s += float(v)
+        n += 1
+    return s / n if n else 0.0
+
+def _normalize_text(s: str) -> str:
+    s = s.strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"[\"'`]", "", s)
+    s = re.sub(r"\s([?.!,;:])", r"\1", s)
+    return s
+
+def _extract_final_number(text: str) -> Optional[float]:
+    """Try 'Answer: <num>' first; else take the last number in the string."""
+    m = re.search(r"(?i)answer\s*:\s*(-?\d+(?:\.\d+)?)", text)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    nums = re.findall(r"-?\d+(?:\.\d+)?", text.replace(",", ""))
+    if nums:
+        try:
+            return float(nums[-1])
+        except ValueError:
+            return None
+    return None
 
 
-def latency_stats(items: Iterable[Dict[str, Any]]) -> Dict[str, float]:
-    """Compute mean, p95, p99 (ms) over `item["latency_ms"]`."""
-    lats = [float(it.get("latency_ms", 0.0)) for it in items]
-    if not lats:
-        return {"latency_mean_ms": 0.0, "latency_p95_ms": 0.0, "latency_p99_ms": 0.0}
+# -------------------- public API ---------------------
+
+def latency_stats(samples: Iterable[float]) -> Dict[str, float]:
+    """Compute mean, p95, p99 (seconds) from an iterable of latency samples (sec)."""
+    vals = sorted(float(x) for x in samples)
     return {
-        "latency_mean_ms": float(statistics.mean(lats)),
-        "latency_p95_ms": percentile(lats, 95),
-        "latency_p99_ms": percentile(lats, 99),
+        "mean": _mean(vals),
+        "p95": _percentile(vals, 95),
+        "p99": _percentile(vals, 99),
     }
 
+def hit_rate(hits: int, total: int) -> float:
+    """Return hits/total as float; 0.0 when total == 0."""
+    return float(hits) / total if total > 0 else 0.0
 
-def hit_miss_counts(items: Iterable[Dict[str, Any]]) -> Dict[str, float]:
-    """Count cache hits/misses using `item["cached"]` (bool).
-    Returns hits, misses, and hit_rate (0..1; 0 if no items).
+def throughput(num_requests: int, elapsed: float) -> float:
+    """Requests per second; 0.0 when elapsed <= 0."""
+    return float(num_requests) / elapsed if elapsed > 0 else 0.0
+
+def correctness(expected: List[str], out: str) -> bool:
+    """Demo-aligned correctness.
+
+    1) Numeric path: parse model output and any expected candidate as numbers;
+       if both sides yield numbers, accept if |diff| <= _NUM_TOL for any candidate.
+    2) Else text path: normalized equality or containment in either direction.
     """
-    hits = 0
-    misses = 0
-    for it in items:
-        if bool(it.get("cached", False)):
-            hits += 1
-        else:
-            misses += 1
-    total = hits + misses
-    hit_rate = (hits / total) if total else 0.0
-    return {"hits": hits, "misses": misses, "hit_rate": float(hit_rate)}
+    if out is None:
+        return False
 
+    # Numeric-first
+    model_num = _extract_final_number(out)
+    exp_nums = [_extract_final_number(e) for e in expected or []]
+    if model_num is not None and any(e is not None for e in exp_nums):
+        return any(e is not None and abs(model_num - e) <= _NUM_TOL for e in exp_nums)
 
-def _normalize(s: str) -> str:
-    """Light normalization for *exact* match: trim + casefold + collapse spaces."""
-    s = (s or "").strip().casefold()
-    # collapse internal whitespace
-    return " ".join(s.split())
-
-
-def accuracy_exact(items: Iterable[Dict[str, Any]]) -> float:
-    """Exact-match accuracy over items that provide a 'gold' string.
-
-    - Compares `_normalize(item["response"]) == _normalize(item["gold"])`.
-    - If *no* items contain a non-empty 'gold', returns 0.0 (deterministic).
-    """
-    have_gold = 0
-    correct = 0
-    for it in items:
-        if "gold" in it and isinstance(it["gold"], str) and it["gold"].strip() != "":
-            have_gold += 1
-            if _normalize(it.get("response", "")) == _normalize(it.get("gold", "")):
-                correct += 1
-    if have_gold == 0:
-        return 0.0
-    return float(correct / have_gold)
-
-
-def aggregate_from_items(items: List[Dict[str, Any]]) -> Tuple[Dict[str, float], Dict[str, float]]:
-    """Aggregate all step-6 metrics from a list of result items.
-
-    Returns:
-      metrics: {
-         "latency_mean_ms", "latency_p95_ms", "latency_p99_ms",
-         "accuracy_exact"
-      }
-      cache_stats: {
-         "hits", "misses", "hit_rate"
-      }
-    """
-    lat = latency_stats(items)
-    acc = accuracy_exact(items)
-    hm = hit_miss_counts(items)
-
-    metrics = {
-        "latency_mean_ms": lat["latency_mean_ms"],
-        "latency_p95_ms": lat["latency_p95_ms"],
-        "latency_p99_ms": lat["latency_p99_ms"],
-        "accuracy_exact": acc,
-    }
-    return metrics, hm
+    # Text fallback
+    m_norm = _normalize_text(out)
+    for e in expected or []:
+        n = _normalize_text(str(e))
+        if n == m_norm or n in m_norm or m_norm in n:
+            return True
+    return False

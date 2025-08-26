@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Optional
 try:
     from langchain_ollama import OllamaLLM as Ollama
 except Exception:
+    print("couldn't import langchain_ollama")
     from langchain_community.llms import Ollama
 
 from langchain.globals import set_llm_cache

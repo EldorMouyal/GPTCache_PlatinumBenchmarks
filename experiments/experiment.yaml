@@ -1,32 +1,40 @@
-
-# Single source of truth for a run. Keep it small and explicit.
-
 run:
-  id: "local-dev-001"        # free-form but unique per run
-  seed: 42                   # for any randomized pieces down the line
-  notes: "smoke test"        # short human note; optional
+  id: "multi-subsets-001"
+  seed: 42
+  notes: "run gsm8k, singleq, and hotpotqa together"
 
 model:
-  provider: "ollama"         # e.g., ollama | openai | lmstudio
-  name: "gemma2:9b"        # concrete model id for the provider
+  provider: "ollama"
+  name: "llama3.1:8b"
+  base_url: "http://localhost:11434"
   params:
-    temperature: 0.2
-    top_p: 0.9
+    temperature: 0.0
     max_tokens: 256
+    top_p: 0.9
 
 dataset:
-  name: "platinumbench"      # loader key you’ll implement later
-  split: "test"               # dev | test | custom
-  subsets: ["gsm8k", "singleq"]
+  name: "platinum-bench"
+  subsets: ["gsm8k", "singleq", "hotpotqa"]
+  split: "test"
   slice:
-    start: 0                 # 0-based start index
-    limit: 10                # number of samples to take
-  use_hf: true
+    start: 0
+    limit: 10
 
 cache:
-  mode: "none"               # none | vanilla | extended
-  # threshold, index paths, etc. intentionally omitted for Step 1
+  mode: "extended"  # none | vanilla-exact | vanilla-approx | extended
+  
+  # Extended strategy configuration options:
+  # Option 1: Direct threshold (0.0-1.0, lower = more aggressive)
+  similarity_threshold: 0.35
+  
+  # Option 2: Preset-based (overrides similarity_threshold if specified)
+  # looseness_preset: "aggressive"  # conservative | moderate | aggressive | reckless
+  
+  # Legacy fields (unused by extended strategy but kept for compatibility)
+  vstore: "faiss"
+  capacity: 5000
+  eviction: "LRU"
 
 output:
-  dir: "results/raw"         # where JSON results will be written
-  filename_pattern: "{run_id}.json"  # runner will format this later
+  dir: "results/raw"
+  filename_pattern: "{run_id}.json"

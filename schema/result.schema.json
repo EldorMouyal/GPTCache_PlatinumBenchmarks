@@ -64,7 +64,7 @@
       "additionalProperties": false,
       "required": ["mode"],
       "properties": {
-        "mode": { "type": "string", "enum": ["none", "vanilla", "extended"] },
+        "mode": { "type": "string", "enum": ["none", "vanilla-exact", "vanilla-approx", "extended"] },
         "stats": {
           "type": "object",
           "additionalProperties": false,

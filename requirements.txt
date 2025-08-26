@@ -1,0 +1,20 @@
+# LLMCache-Bench — runtime requirements (tight, project-focused)
+# Purpose: Evaluate GPTCache + FAISS semantic caching on PlatinumBench via local Ollama.
+
+# Config + CLI tooling
+PyYAML>=6.0
+
+# Data loading (Hugging Face datasets is REQUIRED for PlatinumBench)
+datasets>=4.0.0
+
+# Caching stack (REQUIRED)
+gptcache>=0.1.44
+faiss-cpu>=1.7.4
+numpy>=1.26
+
+# Scripts (aggregation + plotting)
+pandas>=2.0
+matplotlib>=3.7
+
+# Model transport: simple HTTP client to local Ollama
+requests>=2.31

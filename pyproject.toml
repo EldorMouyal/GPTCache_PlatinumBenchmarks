@@ -1,22 +1,43 @@
-[build-system]
-requires = ["setuptools>=61.0.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "llmcache-bench"
 version = "0.1.0"
-description = "Benchmarking framework for semantic caching in LLMs"
+description = "Benchmarking GPTCache strategies on PlatinumBench with Ollama"
+authors = [{ name = "Eldor Mouyal" }]
 readme = "README.md"
-requires-python = ">=3.9"
-dependencies = []
+requires-python = ">=3.10"
+
+dependencies = [
+    "pyyaml",
+    "datasets",
+    "langchain",
+    "langchain-community",
+    "langchain-ollama",
+    "gptcache",
+    "faiss-cpu",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+# Ensure pytest finds tests/ as the root for discovery
+minversion = "7.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.black]
 line-length = 88
-target-version = ["py39"]
+target-version = ["py310"]
+skip-string-normalization = false
 
 [tool.ruff]
 line-length = 88
-select = ["E", "F", "W", "C90"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+target-version = "py310"
+select = ["E", "F"]    # basic errors/format issues
+ignore = ["E501"]      # handled by black

@@ -10,7 +10,7 @@ It allows running controlled experiments with/without cache, collecting metrics 
 
 \## Goals
 
-* Compare caching strategies ('none', 'vanilla', 'extended')
+* Compare caching strategies ('none', 'vanilla-exact', 'vanilla-approx', 'extended')
 * Provide reproducible experiment configs
 * Log raw results and aggregated metrics
 

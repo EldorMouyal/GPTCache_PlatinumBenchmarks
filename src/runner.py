@@ -1,196 +1,279 @@
-#!/usr/bin/env python3
-"""
-runner.py — Step 2 (Runner Core) for LLMCache-Bench
+from __future__ import annotations
 
-Scope (Step 2 only):
-- Load experiments/experiment.yaml
-- Validate schema/result.schema.json (structure check)
-- Simulate a run over a dummy dataset slice (no real model/dataset/cache)
-- Measure per-item latency, produce fake response
-- Aggregate minimal metrics: mean/p95/p99 latency (ms), exact-match accuracy (0.0)
-- Populate cache stats as zeros under cache.stats
-- Emit results JSON to output.dir/{run_id}.json and validate again
+"""Runner Core (Step 6)
 
-Deps: pyyaml, jsonschema (standard library otherwise)
+Mode supported in this step: **none** (no caching).
+Keeps the implementation tiny and mirrors the demos' control flow:
+  - load YAML config
+  - build LLM (LangChain Ollama adapter)
+  - load dataset slice(s) (PlatinumBench subsets)
+  - for each row: form question, call LLM, time latency, check correctness
+  - aggregate metrics and write result JSON
+
+This file deliberately avoids any heavy logging or complex abstractions.
 """
 
 import argparse
 import json
-import math
-import os
-import statistics
 import time
-import uuid
-from datetime import datetime, timezone
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 import yaml
-from jsonschema import validate
+
+# Local modules
+from src.models.ollama import build_llm  # Step 4
+from src.bench_datasets.platinum import (
+    load as load_platinum,
+    pick_question,
+    expected_candidates,
+)  # Step 5
+from src import metrics  # Step 2
 
 
-# ----------------------------- utils -----------------------------
+# ---------------------------
+# Public API
+# ---------------------------
 
-def iso_utc_now() -> str:
-    # RFC3339/ISO8601 with 'Z'
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+def main(config_path: str) -> None:
+    """Load YAML config, run one experiment, and write JSON results.
 
+    Args:
+        config_path: Path to experiments/experiment.yaml
+    """
+    cfg = _read_yaml(config_path)
 
-def load_yaml(path: str):
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    result = run_once(cfg)
 
+    out_dir = Path(cfg.get("output", {}).get("dir", "results/raw"))
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-def load_json(path: str):
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    # Resolve output file name from pattern
+    run_id = cfg.get("run", {}).get("id", f"run-{int(time.time())}")
+    pattern = cfg.get("output", {}).get("filename_pattern", "{run_id}.json")
+    out_path = out_dir / pattern.format(run_id=run_id)
 
-
-def simulate_model_call(prompt: str):
-    """Fake model call with tiny non-zero latency and dummy response."""
-    start = time.perf_counter()
-    time.sleep(0.01)  # ensure latency > 0
-    response = f"fake-response-for:{prompt}"
-    latency_ms = (time.perf_counter() - start) * 1000.0
-    return response, latency_ms
-
-
-def percentile(values, p):
-    """Nearest-rank percentile (safe for small n)."""
-    if not values:
-        return 0.0
-    s = sorted(values)
-    rank = max(1, math.ceil((p / 100.0) * len(s)))
-    return float(s[rank - 1])
+    out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2))
+    print(f"✅ Wrote results to {out_path}")
 
 
-# ----------------------------- main -----------------------------
+def run_once(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute one experiment according to the given config.
 
-def main():
-    parser = argparse.ArgumentParser(description="LLMCache-Bench Runner Core (Step 2)")
-    parser.add_argument("--config", default="experiments/experiment.yaml",
-                        help="Path to experiment YAML (default: experiments/experiment.yaml)")
-    parser.add_argument("--schema", default="schema/result.schema.json",
-                        help="Path to result JSON schema (default: schema/result.schema.json)")
-    args = parser.parse_args()
+    Expects keys (see guide): run, model, dataset, cache, output.
+    Only cache.mode == "none" is handled in this step.
 
-    # Load config & schema
-    cfg = load_yaml(args.config)
-    schema = load_json(args.schema)
+    Returns:
+        Dict matching the example result JSON structure in the guide.
+    """
+    t_start = time.perf_counter()
 
-    run_cfg = cfg.get("run", {})
+    # --- Model ---
     model_cfg = cfg.get("model", {})
-    dataset_cfg = cfg.get("dataset", {})
+    provider = model_cfg.get("provider", "ollama")
+    if provider != "ollama":
+        raise ValueError("Step 6 supports provider=ollama only.")
+
+    name = model_cfg.get("name")
+    base_url = model_cfg.get("base_url", "http://localhost:11434")
+    params = model_cfg.get("params", {})
+
+    llm = build_llm(model=name, base_url=base_url, params=params)
+
+    # --- Dataset ---
+    ds_cfg = cfg.get("dataset", {})
+    ds_name = ds_cfg.get("name", "platinum-bench")
+
+    # Support either a single `subset` *or* a list under `subsets`.
+    subsets = ds_cfg.get("subsets")
+    if not subsets:
+        subsets = [ds_cfg.get("subset", "gsm8k")]
+
+    split = ds_cfg.get("split", "test")
+    slice_cfg = ds_cfg.get("slice", {})
+    start = int(slice_cfg.get("start", 0))
+    limit = int(slice_cfg.get("limit", 10))
+
+    if ds_name != "platinum-bench":
+        raise ValueError("Step 6 supports dataset.name=platinum-bench only.")
+
+    # Load all requested subsets
+    loaded: List[Tuple[str, List[Dict[str, Any]]]] = []
+    total = 0
+    for s in subsets:
+        rs = load_platinum(subset=s, split=split, start=start, limit=limit)
+        loaded.append((s, rs))
+        total += len(rs)
+
+    if total == 0:
+        # Still produce a valid, mostly-empty result
+        return _empty_result(cfg)
+
+    # --- Cache (mode=none only) ---
     cache_cfg = cfg.get("cache", {})
-    output_cfg = cfg.get("output", {})
+    cache_mode = cache_cfg.get("mode", "none")
+    if cache_mode != "none":
+        # In this step we intentionally do *not* initialize GPTCache.
+        print("[runner] Warning: only cache.mode=none is implemented in Step 6. Proceeding without cache.")
 
-    # Required-by-schema fields
-    run_id = run_cfg.get("id", f"run-{uuid.uuid4().hex[:8]}")
-    seed = int(run_cfg.get("seed", 0))
-    notes = run_cfg.get("notes")
-    slice_cfg = dataset_cfg.get("slice", {}) or {}
-    start_idx = int(slice_cfg.get("start", 0))
-    limit = int(slice_cfg.get("limit", 1))
+    # --- Main loop ---
+    item_logs: List[Dict[str, Any]] = []
+    latencies: List[float] = []
+    num_correct = 0
 
-    started_at = iso_utc_now()
+    for subset_name, rows in loaded:
+        for idx, row in enumerate(rows):
+            q = pick_question(row)
+            expected = expected_candidates(row, subset_name)
 
-    items = []
-    latencies = []
+            t0 = time.perf_counter()
+            out = llm.invoke(q)
+            t1 = time.perf_counter()
 
-    # Simulate a slice of dummy prompts, sized by dataset.slice.limit
-    for i in range(start_idx, start_idx + limit):
-        prompt = f"dummy-prompt-{i}"
-        response, latency_ms = simulate_model_call(prompt)
-        items.append({
-            "id": str(uuid.uuid4()),
-            "prompt": prompt,
-            "response": response,
-            "latency_ms": latency_ms,
-            "cached": False
-            # "gold" optional; omitted for Step 2
-        })
-        latencies.append(latency_ms)
+            latency = t1 - t0
+            latencies.append(latency)
 
-    # Minimal metrics (ms)
-    latency_mean_ms = float(statistics.mean(latencies)) if latencies else 0.0
-    latency_p95_ms = float(percentile(latencies, 95))
-    latency_p99_ms = float(percentile(latencies, 99))
-    accuracy_exact = 0.0  # trivial placeholder
+            is_corr = metrics.correctness(expected, out)
+            if is_corr:
+                num_correct += 1
 
-    completed_at = iso_utc_now()
+            item_logs.append(
+                {
+                    "subset": subset_name,
+                    "row_index": idx + start,
+                    "question": q,
+                    "expected": expected,
+                    "model_output": out,
+                    "latency_sec": round(latency, 6),
+                    "cache_hit": False,  # no cache in this step
+                    "correct": bool(is_corr),
+                }
+            )
 
-    # Build result strictly per schema
-    run_obj = {
-        "id": run_id,
-        "seed": seed,
-        "started_at": started_at,
-        "completed_at": completed_at,
-        "status": "success",
+    elapsed = time.perf_counter() - t_start
+
+    # --- Aggregates ---
+    lat_stats = metrics.latency_stats(latencies)
+    hitrate = metrics.hit_rate(0, total)  # no cache => 0 hits
+    qps = metrics.throughput(total, elapsed)
+    acc = num_correct / total if total else 0.0
+
+    # --- Result object ---
+    dataset_block = {
+        "name": ds_name,
+        "split": split,
+        "slice": {"start": start, "limit": limit},
     }
-    if notes is not None:
-        run_obj["notes"] = notes  # allowed by schema
+    if len(subsets) == 1:
+        dataset_block["subset"] = subsets[0]
+    else:
+        dataset_block["subsets"] = subsets
 
-    result = {
-        "run": run_obj,
+    result: Dict[str, Any] = {
+        "run_id": cfg.get("run", {}).get("id", f"run-{int(time.time())}"),
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
         "model": {
-            "provider": model_cfg.get("provider", "dummy"),
-            "name": model_cfg.get("name", "dummy-model"),
-            # schema requires params object; echo or provide empty object
-            "params": model_cfg.get("params", {}),
+            "provider": provider,
+            "name": name,
+            "base_url": base_url,
+            "params": params,
         },
-        "dataset": {
-            "name": dataset_cfg.get("name", "dummy-dataset"),
-            "split": dataset_cfg.get("split", "dev"),
-            "slice": {
-                "start": start_idx,
-                "limit": limit,
-            },
-            "count_processed": len(items),
-        },
+        "dataset": dataset_block,
         "cache": {
-            "mode": cache_cfg.get("mode", "none"),
-            "stats": {
-                "hits": 0,
-                "misses": 0,
-            },
+            # Echo back config; emphasize that cache is disabled in this step.
+            "mode": "none",
+            "similarity_threshold": cache_cfg.get("similarity_threshold"),
+            "vstore": cache_cfg.get("vstore"),
+            "capacity": cache_cfg.get("capacity"),
+            "eviction": cache_cfg.get("eviction"),
         },
         "metrics": {
-            "latency_mean_ms": latency_mean_ms,
-            "latency_p95_ms": latency_p95_ms,
-            "latency_p99_ms": latency_p99_ms,
-            "accuracy_exact": accuracy_exact,
+            "latency_mean_sec": round(lat_stats.get("mean", 0.0), 6),
+            "latency_p95_sec": round(lat_stats.get("p95", 0.0), 6),
+            "latency_p99_sec": round(lat_stats.get("p99", 0.0), 6),
+            "cache_hit_rate": hitrate,
+            "throughput_qps": round(qps, 6),
+            "correctness": round(acc, 6),
         },
-        "items": items,
-        "output": {
-            "dir": output_cfg.get("dir", "results/raw"),
-            # schema requires 'file' (not filename_pattern)
-            "file": output_cfg.get("filename_pattern", "{run_id}.json").format(run_id=run_id),
-        },
+        "items": item_logs,
     }
 
-    # Validate BEFORE writing
-    try:
-        validate(instance=result, schema=schema)
-    except Exception as e:
-        print("❌ Result does not match schema (pre-write):", e)
-        return
+    return result
 
-    # Prepare output path and write file
-    out_dir = result["output"]["dir"]
-    os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, result["output"]["file"])
 
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=2)
+# ---------------------------
+# Helpers
+# ---------------------------
 
-    # Validate AFTER writing
-    try:
-        validate(instance=result, schema=schema)
-    except Exception as e:
-        print("❌ Result failed schema validation after write:", e)
-        return
+def _read_yaml(path: str | Path) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
 
-    print(f"✅ Run completed. Output written to {out_path}")
-    print("   Validated against schema and OK.")
 
+def _empty_result(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Produce a valid result dict when dataset slice is empty."""
+    model_cfg = cfg.get("model", {})
+    ds_cfg = cfg.get("dataset", {})
+    cache_cfg = cfg.get("cache", {})
+
+    subsets = ds_cfg.get("subsets")
+    if not subsets:
+        subsets = [ds_cfg.get("subset", "gsm8k")]
+
+    dataset_block = {
+        "name": ds_cfg.get("name", "platinum-bench"),
+        "split": ds_cfg.get("split", "test"),
+        "slice": {
+            "start": int(ds_cfg.get("slice", {}).get("start", 0)),
+            "limit": int(ds_cfg.get("slice", {}).get("limit", 0)),
+        },
+    }
+    if len(subsets) == 1:
+        dataset_block["subset"] = subsets[0]
+    else:
+        dataset_block["subsets"] = subsets
+
+    return {
+        "run_id": cfg.get("run", {}).get("id", f"run-{int(time.time())}"),
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "model": {
+            "provider": model_cfg.get("provider", "ollama"),
+            "name": model_cfg.get("name"),
+            "base_url": model_cfg.get("base_url", "http://localhost:11434"),
+            "params": model_cfg.get("params", {}),
+        },
+        "dataset": dataset_block,
+        "cache": {
+            "mode": "none",
+            "similarity_threshold": cache_cfg.get("similarity_threshold"),
+            "vstore": cache_cfg.get("vstore"),
+            "capacity": cache_cfg.get("capacity"),
+            "eviction": cache_cfg.get("eviction"),
+        },
+        "metrics": {
+            "latency_mean_sec": 0.0,
+            "latency_p95_sec": 0.0,
+            "latency_p99_sec": 0.0,
+            "cache_hit_rate": 0.0,
+            "throughput_qps": 0.0,
+            "correctness": 0.0,
+        },
+        "items": [],
+    }
+
+
+# ---------------------------
+# CLI
+# ---------------------------
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Run one LLMCache-Bench experiment (mode=none)")
+    parser.add_argument(
+        "config",
+        nargs="?",
+        default="experiments/experiment.yaml",
+        help="Path to the experiment YAML file",
+    )
+    args = parser.parse_args()
+    main(args.config)

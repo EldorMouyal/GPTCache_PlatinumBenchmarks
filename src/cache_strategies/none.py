@@ -1,27 +1,25 @@
+# src/cache_strategies/none.py
+
 """
-Strategy: none
-Behavior: no caching (always miss). Returns a dummy string so callers have something to log.
-Stats: increments STATS["misses"] on every query.
+Cache Strategy: None
+
+This module disables caching entirely.
+It sets the LangChain LLM cache to None, ensuring that
+every request goes directly to the model backend.
+
+References:
+- Detailed structure guide: PROJECT_STRUCTURE_GUIDE_DETAILED.md
+- Demo alignment: matches behavior when GPTCache is not initialized.
 """
 
-from typing import Dict, Any
-
-STATS: Dict[str, int] = {"hits": 0, "misses": 0}
-_STATE: Dict[str, Any] = {}  # holds config, if needed later
+from langchain_core.globals import set_llm_cache
 
 
-def setup_cache(config: Dict[str, Any]) -> None:
-    """Initialize/clear internal state for the 'none' strategy."""
-    STATS["hits"] = 0
-    STATS["misses"] = 0
-    _STATE.clear()
-    _STATE["config"] = config or {}
-
-
-def query(prompt: str) -> str:
+def setup_cache(cfg: dict) -> None:
     """
-    Always a cache miss. Returns a placeholder string.
-    (Runner will later decide what to do with a miss.)
+    Disable caching for the run.
+
+    Args:
+        cfg (dict): Experiment configuration dictionary (unused here).
     """
-    STATS["misses"] += 1
-    return f"[none-miss]:{prompt}"
+    set_llm_cache(None)
