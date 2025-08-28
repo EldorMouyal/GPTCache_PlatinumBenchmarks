@@ -123,7 +123,7 @@ def run_experiment(config_path: str) -> Tuple[bool, str]:
         # Run experiment
         result = subprocess.run(
             [sys.executable, "scripts/run.py", "--config", config_path],
-            capture_output=True,
+            capture_output=True, # set to False if you want to see status and more information.
             text=True
         )
         
