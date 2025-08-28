@@ -26,7 +26,7 @@ cd LLMCache_Proj
 docker-compose up
 
 # In another terminal, pull a model
-docker-compose exec ollama ollama pull gemma3:4b
+docker-compose exec ollama ollama pull gemma2:9b
 
 # Run experiments
 docker-compose up llmcache-bench
@@ -43,7 +43,7 @@ pip install -e .
 ollama serve
 
 # Pull a model
-ollama pull gemma3:4b
+ollama pull gemma2:9b
 
 # Run experiments
 python scripts/run.py

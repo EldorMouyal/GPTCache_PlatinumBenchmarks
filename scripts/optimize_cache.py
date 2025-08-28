@@ -9,14 +9,14 @@ clears cache between runs, and provides comprehensive analysis of results.
 
 import os
 import json
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple, Any
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
+import yaml
 from datetime import datetime
 
 
@@ -70,50 +70,39 @@ def generate_config(embedding_model: str, threshold: float, base_config_path: st
     Returns:
         Path to generated configuration file
     """
-    # Read base configuration
-    with open(base_config_path, 'r') as f:
-        config_content = f.read()
+    # Load base configuration as YAML
+    with open(base_config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
     
     # Generate unique run ID
     run_id = f"enhanced_{embedding_model}_{threshold:.2f}"
     
-    # Update configuration
-    config_content = config_content.replace(
-        'id: "vanilla_approx_095"',
-        f'id: "{run_id}"'
-    )
-    config_content = config_content.replace(
-        'mode: "vanilla_approx"',
-        'mode: "enhanced_semantic"'
-    )
-    config_content = config_content.replace(
-        'similarity_threshold: 0.95',
-        f'similarity_threshold: {threshold}'
-    )
+    # Update configuration values
+    # Update run ID (flexible - works with any existing ID)
+    if 'run' not in config:
+        config['run'] = {}
+    config['run']['id'] = run_id
     
-    # Add embedding model configuration
-    # Find cache section and add embedding_model parameter
-    lines = config_content.split('\n')
-    cache_section_found = False
-    modified_lines = []
+    # Update cache strategy to enhanced_semantic
+    if 'cache' not in config:
+        config['cache'] = {}
+    config['cache']['mode'] = 'enhanced_semantic'
+    config['cache']['similarity_threshold'] = threshold
+    config['cache']['embedding_model'] = embedding_model
+    config['cache']['enable_quality_validation'] = True
     
-    for line in lines:
-        modified_lines.append(line)
-        if line.strip() == "cache:" or line.strip().startswith("cache:"):
-            cache_section_found = True
-        elif cache_section_found and line.strip().startswith("similarity_threshold:"):
-            # Add embedding_model right after similarity_threshold
-            indent = "  "  # Match YAML indentation
-            modified_lines.append(f"{indent}embedding_model: \"{embedding_model}\"")
-            modified_lines.append(f"{indent}enable_quality_validation: true")
-            cache_section_found = False  # Only add once
-    
-    config_content = '\n'.join(modified_lines)
+    # Preserve other cache settings but ensure we have defaults
+    if 'vstore' not in config['cache']:
+        config['cache']['vstore'] = 'faiss'
+    if 'capacity' not in config['cache']:
+        config['cache']['capacity'] = 5000
+    if 'eviction' not in config['cache']:
+        config['cache']['eviction'] = 'LRU'
     
     # Write configuration file
     config_filename = f"{TEMP_CONFIG_DIR}/config_{run_id}.yaml"
-    with open(config_filename, 'w') as f:
-        f.write(config_content)
+    with open(config_filename, 'w', encoding='utf-8') as f:
+        yaml.dump(config, f, default_flow_style=False, allow_unicode=True, indent=2)
     
     return config_filename
 
@@ -158,34 +147,52 @@ def run_experiment(config_path: str) -> Tuple[bool, str]:
         return False, ""
 
 
-def extract_metrics(result_file: str) -> Dict[str, Any]:
+def run_aggregation_and_plotting() -> Tuple[bool, str]:
     """
-    Extract relevant metrics from experiment result file.
+    Run aggregate.py and plot.py scripts to generate analysis.
     
-    Args:
-        result_file: Path to experiment result JSON file
-        
     Returns:
-        Dictionary with extracted metrics
+        (success, csv_path) tuple
     """
-    with open(result_file, 'r') as f:
-        data = json.load(f)
+    print("[optimize] Running aggregation analysis...")
     
-    metrics = data.get('metrics', {})
-    cache_stats = metrics.get('cache_statistics', {})
+    # Ensure output directories exist
+    Path("results/tables").mkdir(parents=True, exist_ok=True)
+    Path("results/figures").mkdir(parents=True, exist_ok=True)
     
-    return {
-        'cache_hit_rate': metrics.get('cache_hit_rate', 0.0),
-        'bad_cache_hit_rate': metrics.get('bad_cache_hit_rate', 0.0),
-        'cache_accuracy': metrics.get('cache_accuracy', 0.0),
-        'correctness': metrics.get('correctness', 0.0),
-        'total_queries': cache_stats.get('total_queries', 0),
-        'cache_hits': cache_stats.get('cache_hits', 0),
-        'bad_cache_hits': cache_stats.get('bad_cache_hits', 0),
-        'good_cache_hits': cache_stats.get('good_cache_hits', 0),
-        'latency_mean_sec': metrics.get('latency_mean_sec', 0.0),
-        'throughput_qps': metrics.get('throughput_qps', 0.0)
-    }
+    csv_path = "results/tables/summary.csv"
+    
+    try:
+        # Run aggregation
+        result = subprocess.run([
+            sys.executable, "scripts/aggregate.py",
+            "--raw-dir", "results/raw",
+            "--output", csv_path
+        ], capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            print(f"[optimize] Aggregation failed: {result.stderr}")
+            return False, ""
+        
+        print(f"[optimize] ✓ Aggregation complete: {csv_path}")
+        
+        # Run plotting
+        result = subprocess.run([
+            sys.executable, "scripts/plot.py",
+            "--csv", csv_path,
+            "--out-dir", "results/figures"
+        ], capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            print(f"[optimize] Plotting failed: {result.stderr}")
+            return False, ""
+        
+        print(f"[optimize] ✓ Plots generated: results/figures/")
+        return True, csv_path
+        
+    except Exception as e:
+        print(f"[optimize] Analysis failed: {e}")
+        return False, ""
 
 
 def run_optimization_sweep():
@@ -194,7 +201,7 @@ def run_optimization_sweep():
     print(f"[optimize] Testing {len(EMBEDDING_MODELS)} models × {len(THRESHOLDS)} thresholds = {len(EMBEDDING_MODELS) * len(THRESHOLDS)} configurations")
     
     ensure_directories()
-    results = []
+    successful_runs = 0
     
     total_configs = len(EMBEDDING_MODELS) * len(THRESHOLDS)
     current_config = 0
@@ -214,137 +221,76 @@ def run_optimization_sweep():
             success, result_file = run_experiment(config_path)
             
             if success:
-                # Extract metrics
-                metrics = extract_metrics(result_file)
-                metrics.update({
-                    'embedding_model': embedding_model,
-                    'threshold': threshold,
-                    'run_id': f"enhanced_{embedding_model}_{threshold:.2f}"
-                })
-                results.append(metrics)
-                
-                print(f"[optimize] ✓ Success: {metrics['cache_hit_rate']:.1%} hit rate, {metrics['bad_cache_hit_rate']:.1%} bad hit rate")
+                successful_runs += 1
+                print(f"[optimize] ✓ Success: Results saved to {result_file}")
             else:
                 print(f"[optimize] ✗ Failed: {embedding_model} @ {threshold}")
     
-    return results
+    print(f"\n[optimize] Completed {successful_runs}/{total_configs} experiments")
+    return successful_runs
 
 
-def analyze_results(results: List[Dict[str, Any]]):
-    """Analyze optimization results and generate summary."""
-    if not results:
-        print("[optimize] No successful results to analyze!")
-        return
-    
-    # Create DataFrame
-    df = pd.DataFrame(results)
-    
-    # Save raw results
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_path = f"{OUTPUT_DIR}/optimization_results_{timestamp}.csv"
-    df.to_csv(csv_path, index=False)
-    print(f"[optimize] Saved results to: {csv_path}")
-    
-    # Generate summary statistics
-    print("\n" + "="*80)
-    print("OPTIMIZATION RESULTS SUMMARY")
-    print("="*80)
-    
-    print("\nTop 5 configurations by cache hit rate:")
-    top_hit_rate = df.nlargest(5, 'cache_hit_rate')
-    for _, row in top_hit_rate.iterrows():
-        print(f"  {row['embedding_model']:<10} @ {row['threshold']:.2f}: "
-              f"{row['cache_hit_rate']:.1%} hits, {row['bad_cache_hit_rate']:.1%} bad hits, "
-              f"{row['cache_accuracy']:.1%} accuracy")
-    
-    print("\nTop 5 configurations by cache accuracy:")
-    top_accuracy = df.nlargest(5, 'cache_accuracy')
-    for _, row in top_accuracy.iterrows():
-        print(f"  {row['embedding_model']:<10} @ {row['threshold']:.2f}: "
-              f"{row['cache_accuracy']:.1%} accuracy, {row['cache_hit_rate']:.1%} hits, "
-              f"{row['bad_cache_hit_rate']:.1%} bad hits")
-    
-    print("\nLowest bad cache hit rates:")
-    low_bad_hits = df.nsmallest(5, 'bad_cache_hit_rate')
-    for _, row in low_bad_hits.iterrows():
-        print(f"  {row['embedding_model']:<10} @ {row['threshold']:.2f}: "
-              f"{row['bad_cache_hit_rate']:.1%} bad hits, {row['cache_hit_rate']:.1%} hits, "
-              f"{row['cache_accuracy']:.1%} accuracy")
-    
-    # Find optimal configuration (balance hit rate and accuracy)
-    # Score = cache_hit_rate * (1 - bad_cache_hit_rate)  
-    df['optimization_score'] = df['cache_hit_rate'] * (1 - df['bad_cache_hit_rate'])
-    optimal = df.loc[df['optimization_score'].idxmax()]
-    
-    print(f"\nRECOMMENDED OPTIMAL CONFIGURATION:")
-    print(f"  Model: {optimal['embedding_model']}")
-    print(f"  Threshold: {optimal['threshold']:.2f}")
-    print(f"  Cache Hit Rate: {optimal['cache_hit_rate']:.1%}")
-    print(f"  Bad Cache Hit Rate: {optimal['bad_cache_hit_rate']:.1%}")
-    print(f"  Cache Accuracy: {optimal['cache_accuracy']:.1%}")
-    print(f"  Overall Correctness: {optimal['correctness']:.1%}")
-    print(f"  Optimization Score: {optimal['optimization_score']:.3f}")
-    
-    # Generate plots
-    generate_plots(df, timestamp)
+def generate_optimization_summary(csv_path: str):
+    """Generate optimization-specific summary from aggregated data."""
+    try:
+        df = pd.read_csv(csv_path)
+        
+        # Filter to only optimization runs (enhanced_* pattern)
+        optimization_runs = df[df['run_id'].str.startswith('enhanced_')]
+        
+        if optimization_runs.empty:
+            print("[optimize] No optimization runs found in aggregated data")
+            return
+        
+        print("\n" + "="*80)
+        print("CACHE OPTIMIZATION RESULTS SUMMARY")
+        print("="*80)
+        
+        print(f"\nProcessed {len(optimization_runs)} optimization configurations")
+        print(f"Cache strategies tested: {sorted(optimization_runs['cache_mode'].unique())}")
+        
+        print("\nTop 5 configurations by cache hit rate:")
+        top_hit_rate = optimization_runs.nlargest(5, 'cache_hit_rate')
+        for _, row in top_hit_rate.iterrows():
+            model_threshold = f"{row.get('similarity_threshold', 'N/A')}"
+            print(f"  {row['cache_mode']:<20} @ {model_threshold}: "
+                  f"{row['cache_hit_rate']:.1%} hits, {row['bad_cache_hit_rate']:.1%} bad hits, "
+                  f"{row['cache_accuracy']:.1%} accuracy")
+        
+        print("\nTop 5 configurations by cache accuracy:")
+        top_accuracy = optimization_runs.nlargest(5, 'cache_accuracy')
+        for _, row in top_accuracy.iterrows():
+            model_threshold = f"{row.get('similarity_threshold', 'N/A')}"
+            print(f"  {row['cache_mode']:<20} @ {model_threshold}: "
+                  f"{row['cache_accuracy']:.1%} accuracy, {row['cache_hit_rate']:.1%} hits, "
+                  f"{row['bad_cache_hit_rate']:.1%} bad hits")
+        
+        print("\nLowest bad cache hit rates:")
+        low_bad_hits = optimization_runs.nsmallest(5, 'bad_cache_hit_rate')
+        for _, row in low_bad_hits.iterrows():
+            model_threshold = f"{row.get('similarity_threshold', 'N/A')}"
+            print(f"  {row['cache_mode']:<20} @ {model_threshold}: "
+                  f"{row['bad_cache_hit_rate']:.1%} bad hits, {row['cache_hit_rate']:.1%} hits, "
+                  f"{row['cache_accuracy']:.1%} accuracy")
+        
+        # Find optimal configuration using cache effectiveness score
+        optimization_runs['optimization_score'] = optimization_runs['cache_effectiveness']
+        optimal = optimization_runs.loc[optimization_runs['optimization_score'].idxmax()]
+        
+        print(f"\nRECOMMENDED OPTIMAL CONFIGURATION:")
+        print(f"  Run ID: {optimal['run_id']}")
+        print(f"  Cache Mode: {optimal['cache_mode']}")
+        print(f"  Similarity Threshold: {optimal.get('similarity_threshold', 'N/A')}")
+        print(f"  Cache Hit Rate: {optimal['cache_hit_rate']:.1%}")
+        print(f"  Bad Cache Hit Rate: {optimal['bad_cache_hit_rate']:.1%}")
+        print(f"  Cache Accuracy: {optimal['cache_accuracy']:.1%}")
+        print(f"  Overall Correctness: {optimal['correctness']:.1%}")
+        print(f"  Cache Effectiveness: {optimal['cache_effectiveness']:.3f}")
+        
+    except Exception as e:
+        print(f"[optimize] Error generating summary: {e}")
 
 
-def generate_plots(df: pd.DataFrame, timestamp: str):
-    """Generate visualization plots for optimization results."""
-    plt.style.use('default')
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle('Cache Strategy Optimization Results', fontsize=16, y=0.98)
-    
-    # Plot 1: Cache Hit Rate by Model and Threshold
-    pivot_hit = df.pivot(index='embedding_model', columns='threshold', values='cache_hit_rate')
-    sns.heatmap(pivot_hit, annot=True, fmt='.1%', ax=axes[0,0], cmap='YlOrRd')
-    axes[0,0].set_title('Cache Hit Rate')
-    axes[0,0].set_xlabel('Threshold')
-    axes[0,0].set_ylabel('Embedding Model')
-    
-    # Plot 2: Bad Cache Hit Rate by Model and Threshold
-    pivot_bad = df.pivot(index='embedding_model', columns='threshold', values='bad_cache_hit_rate')
-    sns.heatmap(pivot_bad, annot=True, fmt='.1%', ax=axes[0,1], cmap='YlOrRd_r')
-    axes[0,1].set_title('Bad Cache Hit Rate (Lower is Better)')
-    axes[0,1].set_xlabel('Threshold')
-    axes[0,1].set_ylabel('Embedding Model')
-    
-    # Plot 3: Cache Hit Rate vs Bad Cache Hit Rate Scatter
-    colors = {'onnx': 'red', 'bge_small': 'blue', 'e5_base': 'green', 'mpnet': 'orange'}
-    for model in df['embedding_model'].unique():
-        model_data = df[df['embedding_model'] == model]
-        axes[1,0].scatter(model_data['cache_hit_rate'], model_data['bad_cache_hit_rate'], 
-                         label=model, alpha=0.7, s=80, c=colors.get(model, 'gray'))
-    
-    axes[1,0].set_xlabel('Cache Hit Rate')
-    axes[1,0].set_ylabel('Bad Cache Hit Rate')
-    axes[1,0].set_title('Cache Performance Trade-off')
-    axes[1,0].legend()
-    axes[1,0].grid(True, alpha=0.3)
-    
-    # Plot 4: Optimization Score by Configuration
-    df_sorted = df.sort_values('optimization_score', ascending=True)
-    y_pos = range(len(df_sorted))
-    bars = axes[1,1].barh(y_pos, df_sorted['optimization_score'])
-    
-    # Color bars by embedding model
-    for i, (_, row) in enumerate(df_sorted.iterrows()):
-        bars[i].set_color(colors.get(row['embedding_model'], 'gray'))
-    
-    axes[1,1].set_yticks(y_pos)
-    axes[1,1].set_yticklabels([f"{row['embedding_model']}@{row['threshold']:.2f}" 
-                               for _, row in df_sorted.iterrows()])
-    axes[1,1].set_xlabel('Optimization Score (Hit Rate × Cache Accuracy)')
-    axes[1,1].set_title('Overall Performance Ranking')
-    axes[1,1].grid(True, alpha=0.3, axis='x')
-    
-    plt.tight_layout()
-    
-    # Save plot
-    plot_path = f"{OUTPUT_DIR}/optimization_plots_{timestamp}.png"
-    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-    plt.show()
-    print(f"[optimize] Saved plots to: {plot_path}")
 
 
 def cleanup_temp_configs():
@@ -361,11 +307,22 @@ def main():
     
     try:
         # Run optimization sweep
-        results = run_optimization_sweep()
+        successful_runs = run_optimization_sweep()
         
-        if results:
-            # Analyze and visualize results
-            analyze_results(results)
+        if successful_runs > 0:
+            print(f"\n[optimize] {successful_runs} experiments completed successfully")
+            
+            # Run aggregation and plotting using existing scripts
+            success, csv_path = run_aggregation_and_plotting()
+            
+            if success:
+                # Generate optimization-specific summary
+                generate_optimization_summary(csv_path)
+                print(f"\n[optimize] ✅ Analysis complete!")
+                print(f"   - Data: {csv_path}")
+                print(f"   - Plots: results/figures/")
+            else:
+                print("[optimize] ❌ Analysis failed - check logs above")
         else:
             print("[optimize] No successful experiments completed!")
             

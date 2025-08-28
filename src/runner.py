@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 
 import yaml
+from tqdm import tqdm
 
 # Local modules
 from src.models.ollama import build_llm
@@ -345,38 +346,53 @@ def run_once(cfg: Dict[str, Any]) -> Dict[str, Any]:
     item_logs: List[Dict[str, Any]] = []
     latencies: List[float] = []
     num_correct = 0
+    questions_processed = 0
 
     for subset_name, rows in loaded:
-        for idx, row in enumerate(rows):
-            q = pick_question(row)
-            expected = expected_candidates(row, subset_name)
+        # Create progress bar for this subset
+        desc = f"Processing {subset_name}"
+        with tqdm(total=len(rows), desc=desc, unit="questions", ncols=80) as pbar:
+            for idx, row in enumerate(rows):
+                q = pick_question(row)
+                expected = expected_candidates(row, subset_name)
 
-            t0 = time.perf_counter()
-            out = llm.invoke(q)
-            t1 = time.perf_counter()
+                t0 = time.perf_counter()
+                out = llm.invoke(q)
+                t1 = time.perf_counter()
 
-            latency = t1 - t0
-            latencies.append(latency)
+                latency = t1 - t0
+                latencies.append(latency)
 
-            is_corr = metrics.correctness(expected, out)
-            if is_corr:
-                num_correct += 1
+                is_corr = metrics.correctness(expected, out)
+                if is_corr:
+                    num_correct += 1
 
-            # Detect cache hit using timing heuristics and correctness
-            cache_hit = hit_tracker.record_query(latency, q, out, is_correct=is_corr)
+                # Detect cache hit using timing heuristics and correctness
+                cache_hit = hit_tracker.record_query(latency, q, out, is_correct=is_corr)
 
-            item_logs.append(
-                {
-                    "subset": subset_name,
-                    "row_index": idx + start,
-                    "question": q,
-                    "expected": expected,
-                    "model_output": out,
-                    "latency_sec": round(latency, 6),
-                    "cache_hit": cache_hit,
-                    "correct": bool(is_corr),
-                }
-            )
+                item_logs.append(
+                    {
+                        "subset": subset_name,
+                        "row_index": idx + start,
+                        "question": q,
+                        "expected": expected,
+                        "model_output": out,
+                        "latency_sec": round(latency, 6),
+                        "cache_hit": cache_hit,
+                        "correct": bool(is_corr),
+                    }
+                )
+                
+                # Update progress bar with current metrics
+                questions_processed += 1
+                hit_rate = hit_tracker.get_hit_rate()
+                correct_rate = num_correct / questions_processed
+                pbar.set_postfix({
+                    'correct': f'{correct_rate:.1%}',
+                    'cache_hit': f'{hit_rate:.1%}',
+                    'latency': f'{latency:.2f}s'
+                })
+                pbar.update(1)
 
     elapsed = time.perf_counter() - t_start
 

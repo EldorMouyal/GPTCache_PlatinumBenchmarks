@@ -5,8 +5,8 @@ run:
 
 model:
   provider: "ollama"  # LLM provider - currently only "ollama" is supported
-  name: "gemma3:4b"  # Model name/identifier as known by the provider
-  base_url: "http://localhost:11434"  # API endpoint URL for the Ollama server
+  name: "gemma2:9b"  # Model name/identifier as known by the provider
+  base_url: "https://53256cc4ef0e.ngrok-free.app"  # API endpoint URL for the Ollama server
   params:
     temperature: 0.0  # Controls randomness (0.0=deterministic, 1.0=very random)
     max_tokens: 256  # Maximum number of tokens in model response
@@ -22,7 +22,7 @@ dataset:
   split: "test"  # Dataset split to use ("test", "train", "validation") - affects which portion of data is used
   slice:
     start: 0  # Starting index for dataset slice (0-based) - skip first N examples
-    limit: 25  # Maximum number of examples to process from the dataset - controls experiment size/duration
+    limit: 50  # Maximum number of examples to process from the dataset - controls experiment size/duration
 
 cache:
   # Dynamic cache strategy loading - any .py file in src/cache_strategies/

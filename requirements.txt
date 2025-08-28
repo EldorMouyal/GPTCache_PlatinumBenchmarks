@@ -26,5 +26,8 @@ requests>=2.31
 # Testing
 pytest>=8.0
 
+# Progress tracking
+tqdm>=4.65
+
 # ML dependencies (required by gptcache)
 onnxruntime>=1.14.1
