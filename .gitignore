@@ -16,8 +16,8 @@ build/
 dist/
 *.egg-info/
 
-# Results and cache artifacts
-results/
+# Results and cache artifacts  
+results/raw/
 cache_artifacts/
 cache/
 *.db

@@ -2,11 +2,12 @@
 """
 scripts/plot_embedding_comparison.py — Embedding Model Analysis Visualizations
 
-Reads the aggregated CSV and generates 4 charts focused on embedding model comparison:
+Reads the aggregated CSV and generates 5 charts focused on embedding model comparison:
 1. Correctness by Embedding Model & Threshold - Bar chart grouped by model and threshold
 2. Latency by Embedding Model & Threshold - Performance impact comparison  
 3. Cache Accuracy by Embedding Model & Threshold - Cache quality comparison
-4. Multi-Metric Summary - Combined dashboard showing key metrics across models
+4. Bad Cache Hit Rate by Embedding Model & Threshold - Cache error analysis
+5. Multi-Metric Summary - Combined dashboard showing key metrics across models
 
 Designed for systematic comparison of embedding models (onnx, bge_small, e5_base, mpnet)
 with threshold analysis (0.9 vs 0.95) and no-cache baseline reference.
@@ -38,6 +39,7 @@ REQUIRED_COLS = [
     "similarity_threshold",
     "correctness", 
     "cache_hit_rate",
+    "bad_cache_hit_rate",
     "cache_accuracy",
     "latency_mean_sec"
 ]
@@ -81,7 +83,7 @@ def _validate_csv(csv_path: str) -> pd.DataFrame:
     
     # Convert numeric columns
     numeric_cols = ["similarity_threshold", "correctness", "cache_hit_rate", 
-                   "cache_accuracy", "latency_mean_sec"]
+                   "bad_cache_hit_rate", "cache_accuracy", "latency_mean_sec"]
     
     for col in numeric_cols:
         if col in df.columns:
@@ -248,6 +250,38 @@ def _plot_cache_accuracy_by_model_threshold(df: pd.DataFrame, output_dir: str) -
     print(f"✅ Saved: {output_path}")
 
 
+def _plot_bad_cache_hit_rate_by_model_threshold(df: pd.DataFrame, output_dir: str) -> None:
+    """Chart: Bad Cache Hit Rate by Embedding Model & Threshold."""
+    cached_df = _get_cached_data(df)
+    
+    if cached_df.empty:
+        print("⚠️  No cached data found, skipping bad cache hit rate comparison")
+        return
+    
+    plt.figure(figsize=(12, 6))
+    
+    if 'embedding_model' in cached_df.columns and not cached_df['embedding_model'].isna().all():
+        # Group by embedding model and threshold
+        grouped = cached_df.groupby(['embedding_model', 'similarity_threshold'])['bad_cache_hit_rate'].mean().reset_index()
+        
+        # Pivot for grouped bar chart
+        pivot_data = grouped.pivot(index='embedding_model', columns='similarity_threshold', values='bad_cache_hit_rate')
+        
+        ax = pivot_data.plot(kind='bar', width=0.8, alpha=0.8, figsize=(12, 6), color=['lightcoral', 'darkred'])
+        plt.title('Bad Cache Hit Rate by Embedding Model & Threshold')
+        plt.xlabel('Embedding Model')
+        plt.ylabel('Bad Cache Hit Rate')
+        plt.legend(title='Similarity Threshold')
+        plt.grid(True, alpha=0.3)
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+    
+    output_path = os.path.join(output_dir, "bad_cache_hit_rate_by_model_threshold.png")
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"✅ Saved: {output_path}")
+
+
 def _plot_multi_metric_summary(df: pd.DataFrame, output_dir: str) -> None:
     """Chart 4: Multi-Metric Summary Dashboard."""
     cached_df = _get_cached_data(df)
@@ -321,6 +355,7 @@ def main() -> None:
     _plot_correctness_by_model_threshold(df, args.out_dir)
     _plot_latency_by_model_threshold(df, args.out_dir)
     _plot_cache_accuracy_by_model_threshold(df, args.out_dir)
+    _plot_bad_cache_hit_rate_by_model_threshold(df, args.out_dir)
     _plot_multi_metric_summary(df, args.out_dir)
     
     print(f"✅ All embedding comparison charts saved to {args.out_dir}")

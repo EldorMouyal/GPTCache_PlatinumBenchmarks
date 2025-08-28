@@ -1,12 +1,12 @@
 run:
-  id: "custom_semantic_bge_09"  # Unique identifier for this experiment run, used in result filenames
+  id: "custom_mpnet_095"  # Unique identifier for this experiment run, used in result filenames
   seed: 42  # Random seed for reproducible results across runs
-  notes: "Demo of custom semantic caching with BGE embeddings @ 0.9 threshold"  # Human-readable description of the experiment
+  notes: "mpnet embedding model with 0.95 similarity threshold"  # Human-readable description of the experiment
 
 model:
   provider: "ollama"  # LLM provider - currently only "ollama" is supported
   name: "gemma2:9b"  # Model name/identifier as known by the provider
-  base_url: "https://562afd744470.ngrok-free.app"  # API endpoint URL for the Ollama server
+  base_url: "https://3d2a6309a75a.ngrok-free.app"  # API endpoint URL for the Ollama server
   params:
     temperature: 0.0  # Controls randomness (0.0=deterministic, 1.0=very random)
     max_tokens: 256  # Maximum number of tokens in model response
@@ -49,13 +49,13 @@ cache:
   # CURRENT CONFIGURATION
   # ==================================================================================
   
-  mode: "none"  # Using configurable semantic caching
+  mode: "custom_semantic"  # Using configurable semantic caching
   
   # Embedding model selection (required)
-  embedding_model: "bge_small"  # Options: onnx, bge_small, e5_base, mpnet
+  embedding_model: "mpnet"  # Options: onnx, bge_small, e5_base, mpnet
   
   # Similarity threshold (required)
-  similarity_threshold: 0.9  # Semantic similarity threshold (0.0-1.0)
+  similarity_threshold: 0.95  # Semantic similarity threshold (0.0-1.0)
   
   # ==================================================================================  
   # CONFIGURATION OPTIONS BY STRATEGY
