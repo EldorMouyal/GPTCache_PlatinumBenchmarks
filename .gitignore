@@ -9,16 +9,49 @@ __pycache__/
 .venv
 venv/
 ENV/
+env/
 
 # Distribution / packaging
 build/
 dist/
-*.egg-info
+*.egg-info/
 
-# REsults and cache artifacts
+# Results and cache artifacts
 results/
 cache_artifacts/
+cache/
+*.db
+*.index
+
+# Claude Code project file (local development only)
+CLAUDE.md
+
+# Temporary experiment configs
+temp_configs/
+test_experiment*.yaml
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
 
 # OS files
 .DS_Store
 Thumbs.db
+
+# Archive/backup directories
+Archive/
+archive/
+
+# Model cache and downloaded models
+models/
+*.bin
+*.safetensors
+
+# Logs
+*.log
+logs/

@@ -29,9 +29,15 @@ def build_llm(model: str, base_url: str, params: Optional[Dict[str, Any]] = None
     Returns:
         An instantiated LLM object (Runnable) with .invoke(prompt: str) -> str
     """
+    import os
+    
     Ollama = _import_ollama_class()
     kwargs: Dict[str, Any] = dict(params or {})
 
+    # Allow environment variable to override config file base_url
+    # Useful for Docker deployments and remote GPU servers
+    effective_base_url = os.getenv("OLLAMA_BASE_URL", base_url)
+
     # Do NOT redefine temperature or any other keys here.
     # If experiment.yaml leaves it out, the provider's own defaults apply.
-    return Ollama(base_url=base_url, model=model, **kwargs)
+    return Ollama(base_url=effective_base_url, model=model, **kwargs)

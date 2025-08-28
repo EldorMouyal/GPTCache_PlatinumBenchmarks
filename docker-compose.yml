@@ -1,0 +1,64 @@
+# Docker Compose for LLMCache Benchmark
+# Provides options for local Ollama or remote GPU configuration
+
+version: '3.8'
+
+services:
+  # Main benchmark application
+  llmcache-bench:
+    build: .
+    volumes:
+      - ./results:/app/results
+      - ./experiments:/app/experiments
+    environment:
+      # Use local Ollama service by default
+      - OLLAMA_BASE_URL=http://ollama:11434
+    depends_on:
+      - ollama
+    networks:
+      - llmcache-network
+
+  # Local Ollama service with GPU support
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    networks:
+      - llmcache-network
+    # Uncomment for GPU support (requires nvidia-docker)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  ollama-models:
+
+networks:
+  llmcache-network:
+    driver: bridge
+
+# Usage instructions:
+#
+# 1. Local CPU Ollama:
+#    docker-compose up
+#
+# 2. Local GPU Ollama (requires nvidia-docker):
+#    - Uncomment the GPU section above
+#    - Run: docker-compose up
+#
+# 3. Remote GPU Ollama:
+#    - Set OLLAMA_BASE_URL to your remote server
+#    - Run only the benchmark: docker-compose up llmcache-bench
+#
+# 4. Pull models:
+#    docker-compose exec ollama ollama pull gemma3:4b
+#
+# 5. Custom configuration:
+#    - Edit experiments/experiment.yaml
+#    - Run: docker-compose up llmcache-bench

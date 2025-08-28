@@ -1,40 +1,48 @@
 run:
-  id: "multi-subsets-001"
-  seed: 42
-  notes: "run gsm8k, singleq, and hotpotqa together"
+  id: "vanilla_approx_095"  # Unique identifier for this experiment run, used in result filenames
+  seed: 42  # Random seed for reproducible results across runs
+  notes: "run gsm8k, singleq, and hotpotqa together"  # Human-readable description of the experiment
 
 model:
-  provider: "ollama"
-  name: "llama3.1:8b"
-  base_url: "http://localhost:11434"
+  provider: "ollama"  # LLM provider - currently only "ollama" is supported
+  name: "gemma3:4b"  # Model name/identifier as known by the provider
+  base_url: "http://localhost:11434"  # API endpoint URL for the Ollama server
   params:
-    temperature: 0.0
-    max_tokens: 256
-    top_p: 0.9
+    temperature: 0.0  # Controls randomness (0.0=deterministic, 1.0=very random)
+    max_tokens: 256  # Maximum number of tokens in model response
+    top_p: 0.9  # Nucleus sampling threshold (controls diversity of token selection)
 
 dataset:
-  name: "platinum-bench"
-  subsets: ["gsm8k", "singleq", "hotpotqa"]
-  split: "test"
+  name: "platinum-bench"  # Dataset name - currently only "platinum-bench" is supported
+  subsets: ["gsm8k", "hotpotqa", "singleq"]  # List of benchmark subsets to run
+    # Available subsets: "gsm8k" (math word problems), "hotpotqa" (multi-hop reasoning), 
+    # "singleq" (single-hop QA), "mbpp" (code generation), "humaneval" (code generation),
+    # "drop" (reading comprehension), "naturalquestions" (open-domain QA)
+    # Can specify multiple: ["gsm8k", "hotpotqa", "singleq"]
+  split: "test"  # Dataset split to use ("test", "train", "validation") - affects which portion of data is used
   slice:
-    start: 0
-    limit: 10
+    start: 0  # Starting index for dataset slice (0-based) - skip first N examples
+    limit: 25  # Maximum number of examples to process from the dataset - controls experiment size/duration
 
 cache:
-  mode: "extended"  # none | vanilla-exact | vanilla-approx | extended
+  # Dynamic cache strategy loading - any .py file in src/cache_strategies/
+  # Examples: "none", "vanilla_exact", "vanilla_approx", "extended"
+  # You can create custom strategies like "extended_loose", "my_custom_cache", etc.
+  mode: "vanilla_approx"  # Cache strategy name (corresponds to .py file in src/cache_strategies/)
   
-  # Extended strategy configuration options:
-  # Option 1: Direct threshold (0.0-1.0, lower = more aggressive)
-  similarity_threshold: 0.35
+  # Configuration options (strategy-specific):
   
-  # Option 2: Preset-based (overrides similarity_threshold if specified)
-  # looseness_preset: "aggressive"  # conservative | moderate | aggressive | reckless
+  # For vanilla_approx and extended strategies:
+  similarity_threshold: 0.95  # Semantic similarity threshold for cache hits (0.0-1.0, higher=stricter matching)
   
-  # Legacy fields (unused by extended strategy but kept for compatibility)
-  vstore: "faiss"
-  capacity: 5000
-  eviction: "LRU"
+  # For extended strategy only (overrides similarity_threshold):
+  # looseness_preset: "aggressive"  # Predefined similarity levels: conservative | moderate | aggressive | reckless
+  
+  # Legacy/compatibility fields:
+  vstore: "faiss"  # Vector store backend for similarity search (currently only "faiss" supported)
+  capacity: 5000  # Maximum number of entries the cache can hold before eviction
+  eviction: "LRU"  # Cache eviction policy when capacity is reached (LRU=Least Recently Used)
 
 output:
-  dir: "results/raw"
-  filename_pattern: "{run_id}.json"
+  dir: "results/raw"  # Directory where experiment results will be saved
+  filename_pattern: "{run_id}.json"  # Filename template for results ({run_id} replaced with actual run ID)

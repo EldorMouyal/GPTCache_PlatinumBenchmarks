@@ -8,7 +8,6 @@ Perfect for establishing baseline performance before studying approximate matchi
 """
 
 from typing import Dict, Any, Optional
-import hashlib
 
 from langchain.globals import set_llm_cache
 from langchain_community.cache import GPTCache as LC_GPTCache
@@ -25,17 +24,12 @@ except ImportError as e:
     ) from e
 
 
-def _hash(s: str) -> str:
-    """Generate hash for cache directory naming."""
-    return hashlib.sha256(s.encode()).hexdigest()
-
-
 def _init_gptcache(cache_obj: Cache, llm_string: str) -> None:
     """
     Initialize GPTCache for exact-match using the 'map' data manager.
-    Creates a per-LLM cache directory to avoid collisions.
+    Uses a centralized cache directory structure.
     """
-    cache_dir = f"vanilla_cache_{_hash(llm_string)}"
+    cache_dir = "cache/vanilla_cache"
     cache_obj.init(
         pre_embedding_func=get_prompt,
         data_manager=manager_factory(manager="map", data_dir=cache_dir),

@@ -28,16 +28,11 @@ def _add_src_to_path() -> None:
 
 
 def _parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="Run LLMCache experiment via scripts directory")
     ap.add_argument(
         "--config",
         default="experiments/experiment.yaml",
         help="Path to experiment config (YAML or JSON)",
-    )
-    ap.add_argument(
-        "--schema",
-        default=None,
-        help="Optional path to result.schema.json (ignored by runner for now)",
     )
     return ap.parse_args()
 
@@ -45,12 +40,11 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     _add_src_to_path()
     # Import only after sys.path is fixed
-    from runner import run_once  # type: ignore
+    from runner import main as runner_main  # type: ignore
 
     ns = _parse_args()
-    out_path = run_once(ns.config, ns.schema)
-    # runner already prints a success line; echo the final path plainly too.
-    print(out_path)
+    # Delegate to runner.main() which handles everything
+    runner_main(ns.config)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,6 @@ with configurable similarity threshold for studying cache hit/miss effects on re
 """
 
 from typing import Dict, Any, Optional
-import hashlib
 
 from langchain.globals import set_llm_cache
 from langchain_community.cache import GPTCache as LC_GPTCache
@@ -25,11 +24,6 @@ except ImportError as e:
     ) from e
 
 
-def _hash(s: str) -> str:
-    """Generate hash for cache directory naming."""
-    return hashlib.sha256(s.encode()).hexdigest()
-
-
 def _init_gptcache(cache_obj: Cache, llm_string: str) -> None:
     """
     Initialize GPTCache for semantic similarity using ONNX embeddings and FAISS.
@@ -39,8 +33,8 @@ def _init_gptcache(cache_obj: Cache, llm_string: str) -> None:
     # ONNX encoder for sentence embeddings (GPTCache/paraphrase-albert-onnx)
     encoder = Onnx()
     
-    # Create unique cache directory per LLM to avoid collisions
-    cache_dir = f"vanilla_approx_cache_{_hash(llm_string)}"
+    # Use centralized cache directory structure
+    cache_dir = "cache/vanilla_approx_cache"
     
     # Use sqlite + faiss data manager (standard approach from demos)
     data_manager = manager_factory(

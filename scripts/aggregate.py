@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
 """
-scripts/aggregate.py — Step 7 (strict pandas requirement)
+scripts/aggregate.py — Cache Reliability Analysis Aggregator
 
-Scan results/raw/*.json produced by runner and write a single CSV summary.
+Scans results/raw/*.json and produces results/tables/summary.csv optimized for 
+analyzing how caching affects model reliability and correctness.
 
-Columns (one row per run JSON):
-  run_id, started_at, completed_at,
-  model_name, cache_mode, dataset_name, slice_limit, count_processed,
-  latency_mean_ms, latency_p95_ms, latency_p99_ms, accuracy_exact,
-  cache_hits, cache_misses, file
-
-Notes:
-- Requires pandas (no stdlib fallback). If missing, exits with code 1 and a clear message.
-- Tolerant toward older/partial result files: if required top-level sections exist,
-  we infer `count_processed` from items and hits/misses from items.cached when needed.
+Focus: Cache impact on model reliability with metrics for plotting comparative analysis.
+Format: Current runner.py JSON format only (fails fast on schema mismatches).
 """
 
 from __future__ import annotations
@@ -23,11 +16,12 @@ import glob
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, List
 
 try:
     import pandas as pd  # type: ignore
-except Exception:
+except ImportError:
     print(
         "❌ pandas is required for aggregation. Install it with:\n"
         "    pip install pandas\n",
@@ -37,133 +31,235 @@ except Exception:
 
 
 def _parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--raw-dir", default="results/raw", help="Directory of raw JSONs")
-    ap.add_argument(
-        "--out",
-        default="results/aggregates/summary.csv",
-        help="Output CSV path (will create parent dir)",
+    parser = argparse.ArgumentParser(
+        description="Aggregate LLMCache-Bench results for cache reliability analysis"
     )
-    return ap.parse_args()
+    parser.add_argument(
+        "--raw-dir", 
+        default="results/raw", 
+        help="Directory containing raw result JSON files"
+    )
+    parser.add_argument(
+        "--output", 
+        default="results/tables/summary.csv",
+        help="Output CSV file path"
+    )
+    return parser.parse_args()
 
 
-def _ensure_dir(path: str) -> None:
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+def _validate_result_schema(data: Dict[str, Any], filepath: str) -> None:
+    """
+    Validate that JSON has expected schema from current runner.py format.
+    Fails fast with clear error messages for missing required fields.
+    """
+    required_top_level = ["run_id", "timestamp", "model", "dataset", "cache", "metrics", "items"]
+    for field in required_top_level:
+        if field not in data:
+            raise ValueError(f"Missing required field '{field}' in {filepath}")
+    
+    # Validate nested required fields
+    required_model = ["provider", "name", "params"]
+    for field in required_model:
+        if field not in data["model"]:
+            raise ValueError(f"Missing model.{field} in {filepath}")
+    
+    required_metrics = ["cache_hit_rate", "bad_cache_hit_rate", "cache_accuracy", 
+                       "cache_statistics", "correctness", "latency_mean_sec"]
+    for field in required_metrics:
+        if field not in data["metrics"]:
+            raise ValueError(f"Missing metrics.{field} in {filepath}")
+    
+    required_cache_stats = ["total_queries", "cache_hits", "cache_misses", 
+                           "bad_cache_hits", "good_cache_hits"]
+    cache_stats = data["metrics"].get("cache_statistics", {})
+    for field in required_cache_stats:
+        if field not in cache_stats:
+            raise ValueError(f"Missing metrics.cache_statistics.{field} in {filepath}")
 
 
-def _rel(path: str) -> str:
+def _extract_dataset_info(dataset: Dict[str, Any]) -> tuple[str, str, int]:
+    """Extract dataset name, subset info, and slice limit."""
+    name = dataset.get("name", "unknown")
+    
+    # Handle both single subset and multiple subsets
+    if "subsets" in dataset:
+        subsets = dataset["subsets"]
+        if isinstance(subsets, list):
+            subset_str = ",".join(subsets)
+        else:
+            subset_str = str(subsets)
+    else:
+        subset_str = dataset.get("subset", "unknown")
+    
+    slice_limit = dataset.get("slice", {}).get("limit", 0)
+    return name, subset_str, int(slice_limit)
+
+
+def _calculate_reliability_metrics(metrics: Dict[str, Any], cache_stats: Dict[str, Any]) -> Dict[str, float]:
+    """Calculate derived reliability analysis metrics."""
+    total_queries = cache_stats["total_queries"]
+    cache_hits = cache_stats["cache_hits"]
+    bad_cache_hits = cache_stats["bad_cache_hits"]
+    hit_rate = metrics["cache_hit_rate"]
+    cache_accuracy = metrics["cache_accuracy"]
+    correctness = metrics["correctness"]
+    
+    # Reliability degradation: Direct accuracy loss from bad cache hits
+    reliability_degradation = bad_cache_hits / total_queries if total_queries > 0 else 0.0
+    
+    # Cache effectiveness: Quality-weighted hit rate
+    cache_effectiveness = hit_rate * cache_accuracy
+    
+    # What correctness would be without bad cache hits
+    # If we had perfect cache accuracy, bad hits would have been correct
+    correctness_without_bad_hits = (correctness * total_queries + bad_cache_hits) / total_queries if total_queries > 0 else correctness
+    
+    # Cache impact on correctness
+    cache_impact_on_correctness = correctness_without_bad_hits - correctness
+    
+    return {
+        "reliability_degradation": reliability_degradation,
+        "cache_effectiveness": cache_effectiveness,
+        "correctness_without_bad_hits": correctness_without_bad_hits,
+        "cache_impact_on_correctness": cache_impact_on_correctness,
+    }
+
+
+def _process_result_file(filepath: str) -> Dict[str, Any] | None:
+    """Process a single result JSON file into a row dict."""
     try:
-        return os.path.relpath(path, start=os.getcwd())
-    except Exception:
-        return path
-
-
-def _collect_rows(raw_dir: str) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for path in sorted(glob.glob(os.path.join(raw_dir, "*.json"))):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception as e:
-            print(f"⚠️  Skipping unreadable JSON: {path} ({e})", file=sys.stderr)
-            continue
-
-        for k in ("run", "model", "dataset", "cache", "metrics", "items"):
-            if k not in data:
-                print(f"⚠️  Missing '{k}', skip: {path}", file=sys.stderr)
-                data = None
-                break
-        if data is None:
-            continue
-
-        run = data["run"]
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        # Validate schema
+        _validate_result_schema(data, filepath)
+        
+        # Extract basic info
+        run_id = data["run_id"]
+        timestamp = data["timestamp"]
+        
+        # Model info
         model = data["model"]
-        dataset = data["dataset"]
+        model_name = model["name"]
+        model_provider = model["provider"]
+        params = model["params"]
+        temperature = params.get("temperature")
+        max_tokens = params.get("max_tokens")
+        top_p = params.get("top_p")
+        
+        # Dataset info
+        dataset_name, dataset_subsets, slice_limit = _extract_dataset_info(data["dataset"])
+        
+        # Cache config
         cache = data["cache"]
+        cache_mode = cache["mode"]
+        similarity_threshold = cache.get("similarity_threshold")
+        looseness_preset = cache.get("looseness_preset")
+        
+        # Core metrics
         metrics = data["metrics"]
-        items = data.get("items", []) or []
-
-        try:
-            run_id = str(run.get("id", "")).strip()
-            if not run_id:
-                raise ValueError("empty run_id")
-            started_at = str(run.get("started_at", ""))
-            completed_at = str(run.get("completed_at", ""))
-
-            model_name = str(model.get("name") or model.get("provider", "unknown"))
-            cache_mode = str(cache.get("mode", "unknown"))
-            dataset_name = str(dataset.get("name", "unknown"))
-            slice_limit = int(dataset.get("slice", {}).get("limit") or 0)
-
-            count_processed = dataset.get("count_processed")
-            if count_processed is None:
-                count_processed = len(items)
-
-            latency_mean_ms = float(metrics["latency_mean_ms"])
-            latency_p95_ms = float(metrics["latency_p95_ms"])
-            latency_p99_ms = float(metrics["latency_p99_ms"])
-            accuracy_exact = float(metrics["accuracy_exact"])
-
-            stats = cache.get("stats") or {}
-            hits = stats.get("hits")
-            misses = stats.get("misses")
-            if hits is None or misses is None:
-                hits = sum(1 for it in items if bool(it.get("cached")))
-                misses = max(len(items) - hits, 0)
-
-            rows.append(
-                {
-                    "run_id": run_id,
-                    "started_at": started_at,
-                    "completed_at": completed_at,
-                    "model_name": model_name,
-                    "cache_mode": cache_mode,
-                    "dataset_name": dataset_name,
-                    "slice_limit": int(slice_limit),
-                    "count_processed": int(count_processed),
-                    "latency_mean_ms": latency_mean_ms,
-                    "latency_p95_ms": latency_p95_ms,
-                    "latency_p99_ms": latency_p99_ms,
-                    "accuracy_exact": accuracy_exact,
-                    "cache_hits": int(hits),
-                    "cache_misses": int(misses),
-                    "file": _rel(path),
-                }
-            )
-        except Exception as e:
-            print(f"⚠️  Skipping invalid result file: {path} ({e})", file=sys.stderr)
-            continue
-
-    return rows
+        cache_stats = metrics["cache_statistics"]
+        
+        # Calculate derived reliability metrics
+        reliability_metrics = _calculate_reliability_metrics(metrics, cache_stats)
+        
+        # Build row
+        row = {
+            # Experiment identification
+            "run_id": run_id,
+            "timestamp": timestamp,
+            "model_name": model_name,
+            "model_provider": model_provider,
+            "cache_mode": cache_mode,
+            "dataset_name": dataset_name,
+            "dataset_subsets": dataset_subsets,
+            "slice_limit": slice_limit,
+            
+            # Model parameters
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "top_p": top_p,
+            
+            # Cache configuration
+            "similarity_threshold": similarity_threshold,
+            "looseness_preset": looseness_preset,
+            
+            # Core reliability metrics
+            "correctness": metrics["correctness"],
+            "cache_hit_rate": metrics["cache_hit_rate"],
+            "bad_cache_hit_rate": metrics["bad_cache_hit_rate"],
+            "cache_accuracy": metrics["cache_accuracy"],
+            
+            # Raw counts for analysis
+            "total_queries": cache_stats["total_queries"],
+            "cache_hits": cache_stats["cache_hits"],
+            "cache_misses": cache_stats["cache_misses"],
+            "bad_cache_hits": cache_stats["bad_cache_hits"],
+            "good_cache_hits": cache_stats["good_cache_hits"],
+            
+            # Performance metrics
+            "latency_mean_sec": metrics["latency_mean_sec"],
+            "latency_p95_sec": metrics.get("latency_p95_sec"),
+            "throughput_qps": metrics.get("throughput_qps"),
+            
+            # Calculated reliability analysis
+            "reliability_degradation": reliability_metrics["reliability_degradation"],
+            "cache_effectiveness": reliability_metrics["cache_effectiveness"],
+            "correctness_without_bad_hits": reliability_metrics["correctness_without_bad_hits"],
+            "cache_impact_on_correctness": reliability_metrics["cache_impact_on_correctness"],
+            
+            # File reference
+            "result_file": os.path.relpath(filepath),
+        }
+        
+        return row
+        
+    except json.JSONDecodeError as e:
+        print(f"❌ Invalid JSON in {filepath}: {e}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"❌ Error processing {filepath}: {e}", file=sys.stderr)
+        return None
 
 
 def main() -> None:
-    ns = _parse_args()
-    rows = _collect_rows(ns.raw_dir)
-
-    # Even if empty, emit a headered CSV for reproducibility.
-    columns = [
-        "run_id",
-        "started_at",
-        "completed_at",
-        "model_name",
-        "cache_mode",
-        "dataset_name",
-        "slice_limit",
-        "count_processed",
-        "latency_mean_ms",
-        "latency_p95_ms",
-        "latency_p99_ms",
-        "accuracy_exact",
-        "cache_hits",
-        "cache_misses",
-        "file",
-    ]
-
-    df = pd.DataFrame(rows, columns=columns)
-    os.makedirs(os.path.dirname(ns.out), exist_ok=True)
-    df.to_csv(ns.out, index=False)
-    print(f"✅ Wrote {len(df)} rows to: {ns.out}")
+    args = _parse_args()
+    
+    # Find all JSON files
+    json_pattern = os.path.join(args.raw_dir, "*.json")
+    json_files = sorted(glob.glob(json_pattern))
+    
+    if not json_files:
+        print(f"❌ No JSON files found in {args.raw_dir}", file=sys.stderr)
+        sys.exit(1)
+    
+    print(f"Processing {len(json_files)} result files from {args.raw_dir}")
+    
+    # Process all files
+    rows = []
+    for filepath in json_files:
+        row = _process_result_file(filepath)
+        if row:
+            rows.append(row)
+    
+    if not rows:
+        print("❌ No valid result files found", file=sys.stderr)
+        sys.exit(1)
+    
+    # Create DataFrame and save
+    df = pd.DataFrame(rows)
+    
+    # Ensure output directory exists
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Save CSV
+    df.to_csv(args.output, index=False)
+    
+    print(f"✅ Aggregated {len(df)} experiments to {args.output}")
+    print(f"   Columns: {len(df.columns)}")
+    print(f"   Cache modes: {sorted(df['cache_mode'].unique())}")
+    print(f"   Models: {sorted(df['model_name'].unique())}")
 
 
 if __name__ == "__main__":

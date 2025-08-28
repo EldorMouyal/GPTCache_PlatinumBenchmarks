@@ -15,11 +15,12 @@ References:
 from langchain_core.globals import set_llm_cache
 
 
-def setup_cache(cfg: dict) -> None:
+def setup_cache(config: dict, model_cfg: dict = None) -> None:
     """
     Disable caching for the run.
 
     Args:
-        cfg (dict): Experiment configuration dictionary (unused here).
+        config (dict): Experiment configuration dictionary (unused here).
+        model_cfg (dict): Model configuration dictionary (unused here).
     """
     set_llm_cache(None)
