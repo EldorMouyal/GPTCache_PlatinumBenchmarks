@@ -433,6 +433,7 @@ def run_once(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "dataset": dataset_block,
         "cache": {
             "mode": cache_mode,
+            "embedding_model": cache_cfg.get("embedding_model"),
             "similarity_threshold": cache_cfg.get("similarity_threshold"),
             "looseness_preset": cache_cfg.get("looseness_preset"),
             "vstore": cache_cfg.get("vstore"),

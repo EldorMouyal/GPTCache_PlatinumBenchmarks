@@ -1,12 +1,12 @@
 run:
-  id: "vanilla_approx_095"  # Unique identifier for this experiment run, used in result filenames
+  id: "custom_semantic_bge_09"  # Unique identifier for this experiment run, used in result filenames
   seed: 42  # Random seed for reproducible results across runs
-  notes: "run gsm8k, singleq, and hotpotqa together"  # Human-readable description of the experiment
+  notes: "Demo of custom semantic caching with BGE embeddings @ 0.9 threshold"  # Human-readable description of the experiment
 
 model:
   provider: "ollama"  # LLM provider - currently only "ollama" is supported
-  name: "gemma2:2b"  # Model name/identifier as known by the provider
-  base_url: "https://94192b69882f.ngrok-free.app"  # API endpoint URL for the Ollama server
+  name: "gemma2:9b"  # Model name/identifier as known by the provider
+  base_url: "https://562afd744470.ngrok-free.app"  # API endpoint URL for the Ollama server
   params:
     temperature: 0.0  # Controls randomness (0.0=deterministic, 1.0=very random)
     max_tokens: 256  # Maximum number of tokens in model response
@@ -14,34 +14,67 @@ model:
 
 dataset:
   name: "platinum-bench"  # Dataset name - currently only "platinum-bench" is supported
-  subsets: ["gsm8k", "hotpotqa", "singleq"]  # List of benchmark subsets to run
-    # Available subsets: "gsm8k" (math word problems), "hotpotqa" (multi-hop reasoning), 
-    # "singleq" (single-hop QA), "mbpp" (code generation), "humaneval" (code generation),
-    # "drop" (reading comprehension), "naturalquestions" (open-domain QA)
+  subsets: ["gsm8k", "hotpotqa", "singleq", "mmlu_math", "winograd_wsc"]  # List of benchmark subsets to run
+    # Available subsets: "gsm8k", "multiarith", "singleop", "singleq", "svamp", "mmlu_math",
+    # "bbh_logical_deduction_three_objects", "bbh_navigate", "bbh_object_counting", 
+    # "drop", "hotpotqa", "squad", "tab_fact", "wsc", "vqa"
     # Can specify multiple: ["gsm8k", "hotpotqa", "singleq"]
   split: "test"  # Dataset split to use ("test", "train", "validation") - affects which portion of data is used
   slice:
     start: 0  # Starting index for dataset slice (0-based) - skip first N examples
-    limit: 20  # Maximum number of examples to process from the dataset - controls experiment size/duration
+    limit: 40 # Maximum number of examples to process from the dataset - controls experiment size/duration
 
 cache:
-  # Dynamic cache strategy loading - any .py file in src/cache_strategies/
-  # Examples: "none", "vanilla_exact", "vanilla_approx", "extended"
-  # You can create custom strategies like "extended_loose", "my_custom_cache", etc.
-  mode: "vanilla_approx"  # Cache strategy name (corresponds to .py file in src/cache_strategies/)
+  # ==================================================================================
+  # AVAILABLE CACHE STRATEGIES (located in src/cache_strategies/)
+  # ==================================================================================
   
-  # Configuration options (strategy-specific):
+  # 1. none.py - No caching (baseline)
+  #    - Disables all caching for performance comparison
+  #    - No configuration options needed
   
-  # For vanilla_approx and extended strategies:
-  similarity_threshold: 0.95  # Semantic similarity threshold for cache hits (0.0-1.0, higher=stricter matching)
+  # 2. vanilla_exact.py - Exact string matching cache  
+  #    - Only caches identical prompt strings
+  #    - Fast but low hit rates on natural language
+  #    - Good for deterministic/templated prompts
+  #    - No configuration options needed
   
-  # For extended strategy only (overrides similarity_threshold):
-  # looseness_preset: "aggressive"  # Predefined similarity levels: conservative | moderate | aggressive | reckless
+  # 3. custom_semantic.py - Configurable semantic caching (experimentation)
+  #    - Supports multiple embedding models: onnx, bge_small, e5_base, mpnet
+  #    - Configurable similarity thresholds for systematic experimentation
+  #    - Optimized for performance without quality validation overhead
+  #    - Options: embedding_model, similarity_threshold
   
-  # Legacy/compatibility fields:
-  vstore: "faiss"  # Vector store backend for similarity search (currently only "faiss" supported)
-  capacity: 5000  # Maximum number of entries the cache can hold before eviction
-  eviction: "LRU"  # Cache eviction policy when capacity is reached (LRU=Least Recently Used)
+  # ==================================================================================
+  # CURRENT CONFIGURATION
+  # ==================================================================================
+  
+  mode: "none"  # Using configurable semantic caching
+  
+  # Embedding model selection (required)
+  embedding_model: "bge_small"  # Options: onnx, bge_small, e5_base, mpnet
+  
+  # Similarity threshold (required)
+  similarity_threshold: 0.9  # Semantic similarity threshold (0.0-1.0)
+  
+  # ==================================================================================  
+  # CONFIGURATION OPTIONS BY STRATEGY
+  # ==================================================================================
+  
+  # FOR none.py:
+  #   No configuration options needed
+  
+  # FOR vanilla_exact.py:
+  #   No configuration options needed
+  
+  # FOR custom_semantic.py:
+  #   embedding_model: "onnx"        # Options: onnx, bge_small, e5_base, mpnet
+  #   similarity_threshold: 0.9      # Semantic similarity threshold (0.0-1.0)
+  
+  # Legacy/compatibility fields (used by some strategies):
+  vstore: "faiss"  # Vector store backend for similarity search
+  capacity: 5000  # Maximum cache entries before eviction  
+  eviction: "LRU"  # Cache eviction policy (Least Recently Used)
 
 output:
   dir: "results/raw"  # Directory where experiment results will be saved

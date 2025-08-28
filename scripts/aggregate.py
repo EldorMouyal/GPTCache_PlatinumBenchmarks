@@ -153,6 +153,7 @@ def _process_result_file(filepath: str) -> Dict[str, Any] | None:
         # Cache config
         cache = data["cache"]
         cache_mode = cache["mode"]
+        embedding_model = cache.get("embedding_model")
         similarity_threshold = cache.get("similarity_threshold")
         looseness_preset = cache.get("looseness_preset")
         
@@ -181,6 +182,7 @@ def _process_result_file(filepath: str) -> Dict[str, Any] | None:
             "top_p": top_p,
             
             # Cache configuration
+            "embedding_model": embedding_model,
             "similarity_threshold": similarity_threshold,
             "looseness_preset": looseness_preset,
             
