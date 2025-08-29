@@ -43,33 +43,35 @@ docker build -t llmcache_bench .
 
 #### Running Experiments
 
+> **Note**: The `--network host` flag allows the Docker container to access your local Ollama server. This is required when using the Docker Ollama setup.
+
 **Linux/macOS/Git Bash:**
 ```bash
 # Quick smoke test (5 examples, ~2 minutes)
-docker run -v $(pwd)/results:/app/results llmcache_bench \
+docker run --network host -v $(pwd)/results:/app/results llmcache_bench \
   python scripts/run.py --config experiments/smoke_test.yaml
 
 # Full default experiment (200 examples, ~15 minutes)  
-docker run -v $(pwd)/results:/app/results llmcache_bench \
+docker run --network host -v $(pwd)/results:/app/results llmcache_bench \
   python scripts/run.py --config experiments/experiment.yaml
 ```
 
 **Windows PowerShell:**
 ```powershell
 # Quick smoke test (5 examples, ~2 minutes)
-docker run -v ${PWD}/results:/app/results llmcache_bench python scripts/run.py --config experiments/smoke_test.yaml
+docker run --network host -v ${PWD}/results:/app/results llmcache_bench python scripts/run.py --config experiments/smoke_test.yaml
 
 # Full default experiment (200 examples, ~15 minutes)
-docker run -v ${PWD}/results:/app/results llmcache_bench python scripts/run.py --config experiments/experiment.yaml
+docker run --network host -v ${PWD}/results:/app/results llmcache_bench python scripts/run.py --config experiments/experiment.yaml
 ```
 
 **Windows CMD:**
 ```cmd
 # Quick smoke test (5 examples, ~2 minutes)
-docker run -v %cd%/results:/app/results llmcache_bench python scripts/run.py --config experiments/smoke_test.yaml
+docker run --network host -v %cd%/results:/app/results llmcache_bench python scripts/run.py --config experiments/smoke_test.yaml
 
 # Full default experiment (200 examples, ~15 minutes)
-docker run -v %cd%/results:/app/results llmcache_bench python scripts/run.py --config experiments/experiment.yaml
+docker run --network host -v %cd%/results:/app/results llmcache_bench python scripts/run.py --config experiments/experiment.yaml
 ```
 
 **Custom Configuration (any platform):**
@@ -147,16 +149,19 @@ python scripts/run.py --config experiments/smoke_test.yaml
 
 ```bash
 # Development mode with live code changes
-docker run -v $(pwd)/src:/app/src \
+docker run --network host \
+           -v $(pwd)/src:/app/src \
            -v $(pwd)/experiments:/app/experiments \
            -v $(pwd)/results:/app/results \
-           llmcache-bench python scripts/run.py
+           llmcache_bench python scripts/run.py
 
-# Run with environment variables
+# Run with environment variables (for remote GPU servers)
 docker run -e OLLAMA_BASE_URL=https://your-gpu-server.com \
-           -e EXPERIMENT_CONFIG=experiments/smoke_test.yaml \
            -v $(pwd)/results:/app/results \
-           llmcache-bench
+           llmcache_bench python scripts/run.py
+
+# Note: --network host is needed for local Ollama connectivity
+# Omit it only when using remote Ollama servers via OLLAMA_BASE_URL
 ```
 
 ### Testing
