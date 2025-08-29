@@ -27,7 +27,7 @@ COPY schema/ ./schema/
 RUN mkdir -p results/raw
 
 # Set environment variables
-ENV PYTHONPATH=/app/src
+ENV PYTHONPATH=/app:/app/src
 ENV PYTHONUNBUFFERED=1
 
 # Default to localhost Ollama (can be overridden)

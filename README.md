@@ -15,21 +15,81 @@ A comprehensive benchmarking framework for evaluating **semantic caching strateg
 
 ## 📋 Quick Start
 
+> 🚀 **Want 10-20x faster performance?** Skip to the [GPU Acceleration (Free!)](#-gpu-acceleration-free) section to use Kaggle's free Tesla T4 GPUs instead of local CPU processing.
+
 ### Option 1: Docker (Recommended)
 
+#### Initial Setup
+
 ```bash
-# Clone the repository
-git clone <your-repo-url>
-cd LLMCache_Proj
+# Clone and enter the repository
+git clone https://github.com/EldorMouyal/GPTCache_PlatinumBenchmarks.git
+cd GPTCache_PlatinumBenchmarks
 
-# Start with local Ollama
-docker-compose up
+# Start the Ollama server
+docker-compose up -d ollama
 
-# In another terminal, pull a model
-docker-compose exec ollama ollama pull gemma2:9b
+# Pull required model (this may take a few minutes on CPU)
+docker-compose exec ollama ollama pull gemma2:2b
 
-# Run experiments
-docker-compose up llmcache-bench
+# Verify Ollama is working
+docker-compose exec ollama ollama list
+
+# Build the benchmark application
+docker build -t llmcache_bench .
+
+# 💡 TIP: For faster performance, consider using free GPU acceleration (see GPU section below)
+```
+
+#### Running Experiments
+
+**Linux/macOS/Git Bash:**
+```bash
+# Quick smoke test (5 examples, ~2 minutes)
+docker run -v $(pwd)/results:/app/results llmcache_bench \
+  python scripts/run.py --config experiments/smoke_test.yaml
+
+# Full default experiment (200 examples, ~15 minutes)  
+docker run -v $(pwd)/results:/app/results llmcache_bench \
+  python scripts/run.py --config experiments/experiment.yaml
+```
+
+**Windows PowerShell:**
+```powershell
+# Quick smoke test (5 examples, ~2 minutes)
+docker run -v ${PWD}/results:/app/results llmcache_bench python scripts/run.py --config experiments/smoke_test.yaml
+
+# Full default experiment (200 examples, ~15 minutes)
+docker run -v ${PWD}/results:/app/results llmcache_bench python scripts/run.py --config experiments/experiment.yaml
+```
+
+**Windows CMD:**
+```cmd
+# Quick smoke test (5 examples, ~2 minutes)
+docker run -v %cd%/results:/app/results llmcache_bench python scripts/run.py --config experiments/smoke_test.yaml
+
+# Full default experiment (200 examples, ~15 minutes)
+docker run -v %cd%/results:/app/results llmcache_bench python scripts/run.py --config experiments/experiment.yaml
+```
+
+**Custom Configuration (any platform):**
+```bash
+# Copy and edit config file
+cp experiments/experiment.yaml my_config.yaml
+
+# Run with custom config (adjust volume syntax for your platform)
+docker run -v $(pwd)/my_config.yaml:/app/experiments/my_config.yaml \
+           -v $(pwd)/results:/app/results llmcache-bench \
+  python scripts/run.py --config experiments/my_config.yaml
+```
+
+#### Using Remote GPU Server
+
+```bash
+# Connect to remote Ollama server (e.g., Kaggle GPU)
+docker run -e OLLAMA_BASE_URL=https://your-ngrok-url.com \
+           -v $(pwd)/results:/app/results llmcache-bench \
+  python scripts/run.py --config experiments/experiment.yaml
 ```
 
 ### Option 2: Local Development
@@ -79,20 +139,22 @@ python scripts/run.py
 # Use custom config
 python scripts/run.py --config experiments/my_experiment.yaml
 
-# Fast test run
-python scripts/run.py --config test_experiment_fast.yaml
+# Quick smoke test (5 examples)
+python scripts/run.py --config experiments/smoke_test.yaml
 ```
 
-### Docker with Custom Config
+### Docker Advanced Usage
 
 ```bash
-# Mount custom config
-docker run -v $(pwd)/my_config.yaml:/app/experiments/my_config.yaml \
+# Development mode with live code changes
+docker run -v $(pwd)/src:/app/src \
+           -v $(pwd)/experiments:/app/experiments \
            -v $(pwd)/results:/app/results \
-           llmcache-bench python scripts/run.py --config experiments/my_config.yaml
+           llmcache-bench python scripts/run.py
 
-# Use remote GPU Ollama
-docker run -e OLLAMA_BASE_URL=https://your-ngrok-url.com \
+# Run with environment variables
+docker run -e OLLAMA_BASE_URL=https://your-gpu-server.com \
+           -e EXPERIMENT_CONFIG=experiments/smoke_test.yaml \
            -v $(pwd)/results:/app/results \
            llmcache-bench
 ```
@@ -111,6 +173,105 @@ python -m pytest tests/integration/ -q
 
 # Verbose output
 python -m pytest -xvs
+```
+
+## 🧪 How to Benchmark
+
+### Benchmarking Methodology
+
+Our benchmarking framework evaluates cache strategies across multiple dimensions to provide comprehensive performance insights.
+
+#### Workload Profiles
+
+**Dataset-Based Evaluation**: Uses PlatinumBench subsets to simulate real-world scenarios:
+- **Repetitive Patterns**: GSM8K math problems with similar question structures (tests cache hit potential)
+- **Diverse Content**: HotpotQA multi-hop reasoning (tests semantic similarity matching)
+- **Mixed Complexity**: SingleQ, MMLU-Math, Winograd (comprehensive evaluation)
+
+**Cache Hit Scenarios**:
+- **High Hit Rate**: Similar questions within same subset (e.g., "What is 2+3?" vs "Calculate 5+7")
+- **Low Hit Rate**: Diverse question types across subsets
+- **Cache Overhead**: Novel prompts unlikely to be cached (measures baseline impact)
+
+#### Metrics Collected
+
+**Performance Metrics**:
+- `latency_mean_sec`: Average response time per query
+- `latency_p95_sec`: 95th percentile latency (captures worst-case performance)
+- `throughput_qps`: Queries processed per second
+
+**Cache Effectiveness**:
+- `cache_hit_rate`: Percentage of queries served from cache
+- `bad_cache_hit_rate`: Percentage of cache hits that were incorrect
+- `cache_accuracy`: Ratio of correct cache hits to total cache hits
+- `cache_effectiveness`: Overall cache performance improvement
+
+**Quality Metrics**:
+- `correctness`: Percentage of responses matching expected answers
+- `reliability_degradation`: Quality impact from caching
+- `correctness_without_bad_hits`: Correctness excluding bad cache hits
+
+#### Running Benchmarks
+
+```bash
+# Basic benchmark run
+python scripts/run.py
+
+# Compare multiple strategies
+python scripts/run.py --config experiments/baseline_comparison.yaml
+
+# Parameter sweeping (similarity thresholds)
+python scripts/run.py --config experiments/threshold_sweep.yaml
+
+# Generate analysis plots
+python scripts/plot_embedding_comparison.py
+
+# Aggregate results across experiments
+python scripts/aggregate.py
+```
+
+#### Automated Testing Integration
+
+Benchmarks integrate with the testing suite:
+
+```bash
+# Run performance tests with pytest-benchmark
+python -m pytest tests/integration/ --benchmark-only
+
+# Full test suite including benchmarks
+python -m pytest tests/ -v
+```
+
+#### Result Interpretation
+
+**Summary Results**: Located in `results/tables/summary.csv`
+
+| Metric | Meaning | Good Values |
+|--------|---------|-------------|
+| `correctness` | Response accuracy | >0.9 (90%+) |
+| `cache_hit_rate` | Cache utilization | 0.2-0.7 (20-70%) |
+| `cache_accuracy` | Cache quality | >0.6 (60%+) |
+| `latency_p95_sec` | Response time | <5.0 seconds |
+| `cache_effectiveness` | Performance gain | >0.1 (10%+) |
+
+**Example Results**:
+```csv
+run_id,correctness,cache_hit_rate,cache_accuracy,latency_mean_sec,cache_effectiveness
+custom_mpnet_095,0.925,0.21,0.714,4.63,0.15
+none,0.965,0.105,1.0,4.47,0.105
+```
+
+**Individual Results**: Detailed JSON files following `schema/result.schema.json` structure:
+```json
+{
+  "run": {"id": "experiment_name", "seed": 42},
+  "metrics": {
+    "latency_mean_sec": 4.63,
+    "cache_hit_rate": 0.21,
+    "correctness": 0.925
+  },
+  "items": [{"prompt": "...", "response": "...", "latency_ms": 4630, "cached": true}]
+}
 ```
 
 ## ⚙️ Configuration
@@ -232,13 +393,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [PlatinumBench](https://huggingface.co/datasets/platinum-bench) for evaluation datasets
 - [Ollama](https://ollama.com) for local LLM serving
 - [Kaggle](https://kaggle.com) for free GPU resources
-
-## 📞 Support
-
-- 🐛 **Issues**: [GitHub Issues](https://github.com/your-username/LLMCache_Proj/issues)
-- 💡 **Discussions**: [GitHub Discussions](https://github.com/your-username/LLMCache_Proj/discussions)
-- 📖 **Documentation**: See `CLAUDE.md` for detailed technical documentation
-
 ---
 
 **Happy caching!** 🚀 Star the repo if you find it useful!

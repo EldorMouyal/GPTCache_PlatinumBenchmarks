@@ -1,5 +1,7 @@
 # LLMCache-Bench — runtime requirements (tight, project-focused)
 # Purpose: Evaluate GPTCache + FAISS semantic caching on PlatinumBench via local Ollama.
+# Note: Install with `pip install -r requirements.txt` for full functionality including
+# custom semantic caching strategies and visualization scripts.
 
 # Config + CLI tooling
 PyYAML>=6.0
@@ -29,5 +31,10 @@ pytest>=8.0
 # Progress tracking
 tqdm>=4.65
 
-# ML dependencies (required by gptcache)
+# ML dependencies (required by gptcache and custom_semantic strategy)
 onnxruntime>=1.14.1
+transformers>=4.21.0
+sentence-transformers>=2.2.0
+
+# Visualization dependencies (for plotting scripts)
+seaborn>=0.12.0

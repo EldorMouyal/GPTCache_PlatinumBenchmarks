@@ -1,0 +1,28 @@
+run:
+  id: "smoke_test"
+  seed: 42
+  notes: "Quick smoke test to verify the system works"
+
+model:
+  provider: "ollama"
+  name: "gemma2:2b"  # Smaller model for faster testing
+  base_url: "http://localhost:11434"
+  params:
+    temperature: 0.0
+    max_tokens: 256
+    top_p: 0.9
+
+dataset:
+  name: "platinum-bench"
+  subsets: ["gsm8k"]  # Single subset for quick testing
+  split: "test"
+  slice:
+    start: 0
+    limit: 5  # Only 5 examples for quick verification
+
+cache:
+  mode: "none"  # No caching for baseline verification
+
+output:
+  dir: "results/raw"
+  filename_pattern: "{run_id}.json"
