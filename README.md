@@ -1,16 +1,17 @@
 # LLMCache-Bench
 
-A comprehensive benchmarking framework for evaluating **semantic caching strategies** in Large Language Models (LLMs). Test different caching approaches, measure performance gains, and optimize your LLM applications.
+A comprehensive benchmarking framework for evaluating **semantic caching strategies** in Large Language Models (LLMs). **Critical findings reveal significant reliability concerns with semantic caching** - test different approaches, measure both performance gains and correctness trade-offs to make informed caching decisions.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## 🚀 Features
 
 - **Multiple Cache Strategies**: None, exact matching, semantic similarity, and advanced configurations
+- **Critical Reliability Analysis**: Measure "bad cache hits" - cached responses that are incorrect despite similarity matching
 - **GPU Acceleration**: Free Tesla T4 GPU via Kaggle notebooks for 10-20x speedup  
 - **Flexible Deployment**: Local development, Docker containers, or cloud environments
-- **Comprehensive Metrics**: Latency, hit rates, correctness, and cache quality analysis
-- **Real Datasets**: PlatinumBench with GSM8K, HotpotQA, SingleQ, and more
+- **Comprehensive Metrics**: Latency, hit rates, correctness, cache accuracy, and reliability degradation analysis
+- **Real Datasets**: PlatinumBench with GSM8K, HotpotQA, SingleQ, MMLU-Math, and Winograd WSC
 - **Dynamic Loading**: Add custom cache strategies without code changes
 
 ## 📋 Quick Start
@@ -207,9 +208,10 @@ Our benchmarking framework evaluates cache strategies across multiple dimensions
 
 **Cache Effectiveness**:
 - `cache_hit_rate`: Percentage of queries served from cache
-- `bad_cache_hit_rate`: Percentage of cache hits that were incorrect
+- `bad_cache_hit_rate`: **Critical metric** - Percentage of cache hits returning incorrect responses (can reach 40-56%)
 - `cache_accuracy`: Ratio of correct cache hits to total cache hits
 - `cache_effectiveness`: Overall cache performance improvement
+- `reliability_degradation`: Quality impact from caching
 
 **Quality Metrics**:
 - `correctness`: Percentage of responses matching expected answers
@@ -251,20 +253,25 @@ python -m pytest tests/ -v
 
 **Summary Results**: Located in `results/tables/summary.csv`
 
-| Metric | Meaning | Good Values |
-|--------|---------|-------------|
-| `correctness` | Response accuracy | >0.9 (90%+) |
-| `cache_hit_rate` | Cache utilization | 0.2-0.7 (20-70%) |
-| `cache_accuracy` | Cache quality | >0.6 (60%+) |
-| `latency_p95_sec` | Response time | <5.0 seconds |
-| `cache_effectiveness` | Performance gain | >0.1 (10%+) |
+| Metric | Meaning | Good Values | **Research Findings** |
+|--------|---------|-------------|----------------------|
+| `correctness` | Response accuracy | >0.9 (90%+) | **Semantic caching reduces to 59-86%** |
+| `cache_hit_rate` | Cache utilization | 0.2-0.7 (20-70%) | Higher hit rates correlate with more errors |
+| `cache_accuracy` | Cache quality | >0.6 (60%+) | **Best case: 56% (ONNX), worst: 44% (E5-base)** |
+| `bad_cache_hit_rate` | Incorrect cache responses | <0.1 (10%) | **Research shows 40-56% across all models** |
+| `latency_p95_sec` | Response time | <5.0 seconds | 5-76% improvement, but at severe correctness cost |
+| `cache_effectiveness` | Performance gain | >0.1 (10%+) | **Trade-off: performance vs reliability** |
 
-**Example Results**:
+**Example Results** (based on Gemma2:9b experiments):
 ```csv
-run_id,correctness,cache_hit_rate,cache_accuracy,latency_mean_sec,cache_effectiveness
-custom_mpnet_095,0.925,0.21,0.714,4.63,0.15
-none,0.965,0.105,1.0,4.47,0.105
+run_id,correctness,cache_hit_rate,cache_accuracy,bad_cache_hit_rate,latency_mean_sec
+none,0.93,0.0,N/A,0.0,4.47
+e5_base_090,0.59,0.472,0.438,0.562,1.08
+bge_small_090,0.796,0.31,0.494,0.506,3.70
+mpnet_090,0.835,0.258,0.525,0.475,4.24
+onnx_090,0.86,0.235,0.561,0.439,4.22
 ```
+**Key Insight**: Higher cache hit rates (e.g., E5-base: 47%) correlate with dramatically reduced correctness (59% vs 93% baseline).
 
 **Individual Results**: Detailed JSON files following `schema/result.schema.json` structure:
 ```json
@@ -311,12 +318,14 @@ cache:
 
 ## 📊 Cache Strategies
 
-| Strategy | Description | Use Case |
-|----------|-------------|----------|
-| `none` | No caching | Baseline comparison |
-| `vanilla_exact` | Exact string matching | Identical queries |
-| `vanilla_approx` | Semantic similarity (FAISS) | Similar questions |
-| `extended` | Advanced similarity with presets | Fine-tuned caching |
+| Strategy | Description | Use Case | **Research Findings** |
+|----------|-------------|----------|----------------------|
+| `none` | No caching | Baseline comparison | **Highest correctness (93%)** |
+| `vanilla_exact` | Exact string matching | Identical queries | Good correctness, low hit rate |
+| `vanilla_approx` | Semantic similarity (FAISS) | Similar questions | **40-56% bad cache hit rates** |
+| `extended` | Advanced similarity with presets | Fine-tuned caching | **Still shows reliability issues** |
+
+⚠️ **Critical Finding**: Research demonstrates semantic caching can reduce correctness from 93% to as low as 59%.
 
 Add custom strategies by creating new files in `src/cache_strategies/` - they're loaded dynamically!
 
@@ -374,11 +383,28 @@ python scripts/clear_cache.py --yes
 
 ## 📈 Results
 
+### ⚠️ Critical Research Findings
+
+**Semantic caching poses significant reliability risks**: Comprehensive evaluation across 4 embedding models (BGE-small, E5-base, MPNet, ONNX) and similarity thresholds (0.9-0.95) reveals:
+
+- **Correctness degradation**: 7-34 percentage point drops (worst case: 93% → 59%)
+- **Bad cache hit rates**: 40-56% of cache hits return incorrect responses  
+- **Trade-off severity**: Performance gains (5-76% latency reduction) come at unacceptable accuracy costs
+- **Threshold insensitivity**: Even tight thresholds (0.95) fail to resolve reliability issues
+
+### Result Files
+
 Experiments generate:
 - **Raw results**: JSON files with detailed metrics (`results/raw/`)
-- **Aggregated data**: Summary statistics and comparisons
-- **Visualizations**: Hit rate vs correctness plots, latency analysis
+- **Aggregated data**: Summary statistics and comparisons (`results/tables/summary.csv`)
+- **Visualizations**: Hit rate vs correctness plots, bad cache hit analysis, latency comparison
 - **Schema validation**: Results follow `schema/result.schema.json`
+
+### Recommendations
+
+1. **Accuracy-Critical Applications**: Consider disabling semantic caching
+2. **Production Systems**: Implement bad cache hit rate monitoring
+3. **Research Applications**: Use this framework to develop correctness-aware caching strategies
 
 ## 🤝 Contributing
 
